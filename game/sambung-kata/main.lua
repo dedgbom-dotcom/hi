@@ -46,7 +46,7 @@ local kataModule = {}
 local kataSet = {} -- Untuk cek duplikat cepat
 
 local function downloadWordlist()
-    local response = httpget(game, "https://raw.githubusercontent.com/danzzy1we/roblox-script-dump/refs/heads/main/WordListDump/withallcombination2.lua")
+    local response = httpget(game, "https://raw.githubusercontent.com/dedgbom-dotcom/hi/refs/heads/main/game/sambung-kata/modules/listkata.lua")
     if not response then
         return false
     end
