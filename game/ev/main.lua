@@ -394,7 +394,7 @@ end)()
 
 local TeleportModule = (function()
     -- GANTI URL INI dengan raw GitHub kamu
-    local TELEPORT_MODULE_URL = "https://raw.githubusercontent.com/xilodasss/vvv/refs/heads/main/TeleportModule.lua"
+    local TELEPORT_MODULE_URL = "https://raw.githubusercontent.com/dedgbom-dotcom/hi/refs/heads/main/game/ev/modules/TeleportModule.lua"
     
     local moduleData = nil
     local loadError = nil
