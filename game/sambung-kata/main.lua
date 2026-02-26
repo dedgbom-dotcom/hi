@@ -25,11 +25,14 @@ if RayfieldFunction == nil then
 end
 
 local Rayfield = RayfieldFunction()
-if Rayfield == nil then
-    warn("Rayfield return nil")
+if Rayfield == nil or type(Rayfield) ~= "table" then
+    warn("Rayfield return nil or invalid")
     return
 end
-print("Rayfield type:", typeof(Rayfield))
+print("Rayfield loaded successfully")
+
+-- Small delay to ensure Rayfield initializes
+task.wait(0.5)
 
 -- =========================
 -- SERVICES
@@ -46,8 +49,12 @@ local kataModule = {}
 local kataSet = {} -- Untuk cek duplikat cepat
 
 local function downloadWordlist()
-    local response = httpget(game, "https://raw.githubusercontent.com/dedgbom-dotcom/hi/refs/heads/main/game/sambung-kata/modules/listkata.lua")
-    if not response then
+    local success, response = pcall(function()
+        return httpget(game, "https://raw.githubusercontent.com/danzzy1we/roblox-script-dump/refs/heads/main/WordListDump/withallcombination2.lua")
+    end)
+    
+    if not success or not response then
+        warn("Failed to download wordlist")
         return false
     end
 
@@ -144,7 +151,13 @@ local function addUsedWord(word)
         usedWords[w] = true
         table.insert(usedWordsList, word)
         if usedWordsDropdown ~= nil then
-            usedWordsDropdown:Set(usedWordsList)
+            -- Safe update with pcall
+            local success, err = pcall(function()
+                usedWordsDropdown:Set(usedWordsList)
+            end)
+            if not success then
+                warn("Failed to update dropdown:", err)
+            end
         end
     end
 end
@@ -154,7 +167,13 @@ local function resetUsedWords()
     usedWordsSet = {}
     usedWordsList = {}
     if usedWordsDropdown ~= nil then
-        usedWordsDropdown:Set({})
+        -- Safe update with empty table
+        local success, err = pcall(function()
+            usedWordsDropdown:Set({})
+        end)
+        if not success then
+            warn("Failed to reset dropdown:", err)
+        end
     end
 end
 
@@ -214,7 +233,7 @@ local function startUltraAI()
     local selectedWord = words[1]
 
     if config.aggression < 100 then
-        local topN = math.floor(#words * (1 - config.aggression/100))
+        local topN = math.floor(#words * (config.aggression/100))
         if topN < 1 then topN = 1 end
         if topN > #words then topN = #words end
         selectedWord = words[math.random(1, topN)]
@@ -231,19 +250,33 @@ local function startUltraAI()
 
         currentWord = currentWord .. string.sub(remain, i, i)
 
-        TypeSound:FireServer()
-        BillboardUpdate:FireServer(currentWord)
+        local success, err = pcall(function()
+            TypeSound:FireServer()
+            BillboardUpdate:FireServer(currentWord)
+        end)
+        if not success then
+            warn("Failed to send update:", err)
+        end
 
         humanDelay()
     end
 
     humanDelay()
 
-    SubmitWord:FireServer(selectedWord)
-    addUsedWord(selectedWord)
+    local success, err = pcall(function()
+        SubmitWord:FireServer(selectedWord)
+    end)
+    if success then
+        addUsedWord(selectedWord)
+    else
+        warn("Failed to submit word:", err)
+    end
 
     humanDelay()
-    BillboardEnd:FireServer()
+    
+    pcall(function()
+        BillboardEnd:FireServer()
+    end)
 
     autoRunning = false
 end
@@ -270,7 +303,7 @@ MainTab:CreateToggle({
     Callback = function(Value)
         autoEnabled = Value
         if Value then
-            startUltraAI()
+            task.spawn(startUltraAI)
         end
     end
 })
@@ -307,7 +340,7 @@ MainTab:CreateSlider({
 
 MainTab:CreateSlider({
     Name = "Min Word Length",
-    Range = {1, 2},
+    Range = {1, 3},
     Increment = 1,
     CurrentValue = config.minLength,
     Callback = function(Value)
@@ -325,9 +358,10 @@ MainTab:CreateSlider({
     end
 })
 
+-- Create dropdown with empty initial options
 usedWordsDropdown = MainTab:CreateDropdown({
     Name = "Used Words",
-    Options = usedWordsList,
+    Options = {},
     CurrentOption = "",
     Callback = function() end
 })
@@ -365,10 +399,15 @@ local function updateOpponentStatus()
         content = "Match tidak aktif"
     end
 
-    local data = {}
-    data.Title = "Status Opponent"
-    data.Content = tostring(content)
-    opponentParagraph.Set(opponentParagraph, data)
+    local success, err = pcall(function()
+        opponentParagraph:Set({
+            Title = "Status Opponent",
+            Content = tostring(content)
+        })
+    end)
+    if not success then
+        warn("Failed to update opponent status:", err)
+    end
 end
 
 local function updateStartLetter()
@@ -380,10 +419,15 @@ local function updateStartLetter()
         content = "Kata Start: -"
     end
 
-    local data = {}
-    data.Title = "Kata Start"
-    data.Content = tostring(content)
-    startLetterParagraph.Set(startLetterParagraph, data)
+    local success, err = pcall(function()
+        startLetterParagraph:Set({
+            Title = "Kata Start",
+            Content = tostring(content)
+        })
+    end)
+    if not success then
+        warn("Failed to update start letter:", err)
+    end
 end
 
 -- ==============================
@@ -391,20 +435,20 @@ end
 -- ==============================
 local AboutTab = Window:CreateTab("About")
 
-local about1 = {}
-about1.Title = "Informasi Script"
-about1.Content = "Auto Kata\nVersi: 2.0 (Anti Double)\nby sazaraaax\nFitur: Auto play dengan wordlist Indonesia + ANTI DUPLICATE KATA\n\nthanks to danzzy1we for the indonesian dictionary"
-AboutTab:CreateParagraph(about1)
+AboutTab:CreateParagraph({
+    Title = "Informasi Script",
+    Content = "Auto Kata\nVersi: 2.0 (Anti Double)\nby sazaraaax\nFitur: Auto play dengan wordlist Indonesia + ANTI DUPLICATE KATA\n\nthanks to danzzy1we for the indonesian dictionary"
+})
 
-local about2 = {}
-about2.Title = "Informasi Update"
-about2.Content = "> Anti Double Word System\n> Wordlist unik (" .. #kataModule .. " kata)\n> Deteksi otomatis kata dobel\n> Performa lebih cepat"
-AboutTab:CreateParagraph(about2)
+AboutTab:CreateParagraph({
+    Title = "Informasi Update",
+    Content = "> Anti Double Word System\n> Wordlist unik (" .. #kataModule .. " kata)\n> Deteksi otomatis kata dobel\n> Performa lebih cepat"
+})
 
-local about3 = {}
-about3.Title = "Cara Penggunaan"
-about3.Content = "1. Aktifkan toggle Auto\n2. Atur delay dan agresivitas\n3. Mulai permainan\n4. Script akan otomatis menjawab\n5. Kata dobel di wordlist sudah dihapus"
-AboutTab:CreateParagraph(about3)
+AboutTab:CreateParagraph({
+    Title = "Cara Penggunaan",
+    Content = "1. Aktifkan toggle Auto\n2. Atur delay dan agresivitas\n3. Mulai permainan\n4. Script akan otomatis menjawab\n5. Kata dobel di wordlist sudah dihapus"
+})
 
 -- =========================
 -- REMOTE EVENTS
@@ -424,7 +468,7 @@ local function onMatchUI(cmd, value)
     elseif cmd == "StartTurn" then
         isMyTurn = true
         if autoEnabled then
-            startUltraAI()
+            task.spawn(startUltraAI)
         end
 
     elseif cmd == "EndTurn" then
@@ -450,13 +494,16 @@ local function onUsedWarn(word)
         addUsedWord(word)
         if autoEnabled and matchActive and isMyTurn then
             humanDelay()
-            startUltraAI()
+            task.spawn(startUltraAI)
         end
     end
 end
 
-MatchUI.OnClientEvent:Connect(onMatchUI)
-BillboardUpdate.OnClientEvent:Connect(onBillboard)
-UsedWordWarn.OnClientEvent:Connect(onUsedWarn)
+-- Connect events with pcall for safety
+pcall(function()
+    MatchUI.OnClientEvent:Connect(onMatchUI)
+    BillboardUpdate.OnClientEvent:Connect(onBillboard)
+    UsedWordWarn.OnClientEvent:Connect(onUsedWarn)
+end)
 
 print("ANTI LUAOBFUSCATOR BUILD V2 LOADED - ANTI DOUBLE WORD ACTIVE")
