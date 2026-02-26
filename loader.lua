@@ -27,7 +27,7 @@ local supportedGames = {
         ids = {
             130342654546662    -- Sambung-Kata
         },
-        script = "https://raw.githubusercontent.com/danzzy1we/roblox-script-dump/main/AutoKataV2.lua" -- Ganti dengan URL script Sambung Kata
+        script = "https://raw.githubusercontent.com/dedgbom-dotcom/hi/refs/heads/main/game/sambung-kata/main.lua" -- Ganti dengan URL script Sambung Kata
     }
 }
 
