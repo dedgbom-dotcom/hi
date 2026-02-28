@@ -2992,6 +2992,631 @@ local LagSwitchModule = (function()
     }
 end)()
 
+-- -------------------------------------------------------------------------- --
+--                         ESP SYSTEM MODULE                                  --
+-- -------------------------------------------------------------------------- --
+
+local ESP_System = {}
+local ESP_Players = game:GetService("Players")
+local ESP_RunService = game:GetService("RunService")
+local ESP_ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ESP_LocalPlayer = ESP_Players.LocalPlayer
+
+ESP_System.PlayersESP = {}
+ESP_System.TicketsESP = {}
+ESP_System.NextbotsESP = {}
+ESP_System.NextbotNames = {}
+ESP_System.Connections = {}
+ESP_System.Running = false
+ESP_System.ChamsPlayers = {}
+ESP_System.TracerDrawings = {}
+ESP_System.TracerAllDrawings = {}
+
+ESP_System.Settings = {
+    Players = {
+        Enabled = false,
+        Color = Color3.fromRGB(255, 255, 255)
+    },
+    Tickets = {
+        Enabled = false,
+        Color = Color3.fromRGB(255, 165, 0)
+    },
+    Nextbots = {
+        Enabled = false,
+        Color = Color3.fromRGB(255, 0, 0)
+    },
+    ChamsPlayers = {
+        Enabled = false,
+        FillColor = Color3.fromRGB(255, 0, 0),
+        OutlineColor = Color3.fromRGB(255, 255, 255),
+        FillTransparency = 0.5,
+        OutlineTransparency = 0,
+    },
+    TracerDowned = {
+    Enabled = false,
+    Color = Color3.fromRGB(255, 50, 50),
+    Thickness = 2,
+    },
+    TracerAll = {
+    Enabled = false,
+    ColorNormal = Color3.fromRGB(255, 255, 255),
+    ColorDowned = Color3.fromRGB(255, 50, 50),
+    Thickness = 2,
+    }
+}
+
+function ESP_System:GetNextbotNames()
+    if ESP_ReplicatedStorage:FindFirstChild("NPCs") then
+        for _, npc in ipairs(ESP_ReplicatedStorage.NPCs:GetChildren()) do
+            table.insert(self.NextbotNames, npc.Name)
+        end
+    end
+    return self.NextbotNames
+end
+
+function ESP_System:IsNextbot(model)
+    if not model or not model.Name then return false end
+    for _, name in ipairs(self.NextbotNames) do
+        if model.Name == name then return true end
+    end
+    local lowerName = model.Name:lower()
+    if lowerName:find("nextbot") or lowerName:find("scp%-") or
+       lowerName:find("^monster") or lowerName:find("^creep") or
+       lowerName:find("^enemy") then return true end
+    if ESP_Players:FindFirstChild(model.Name) then return false end
+    if model:GetAttribute("IsNPC") or model:GetAttribute("Nextbot") then return true end
+    return false
+end
+
+function ESP_System:GetDistanceFromPlayer(position)
+    if not ESP_LocalPlayer.Character or not ESP_LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        return 0
+    end
+    return (position - ESP_LocalPlayer.Character.HumanoidRootPart.Position).Magnitude
+end
+
+function ESP_System:CreatePlayerESP(player)
+    if not self.Settings.Players.Enabled or player == ESP_LocalPlayer then return end
+    local character = player.Character
+    if not character then return end
+    local head = character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+    if not head then return end
+    if self.PlayersESP[player] and self.PlayersESP[player].Parent then
+        self.PlayersESP[player]:Destroy()
+    end
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "DraconicPlayerESP"
+    billboard.Adornee = head
+    billboard.Size = UDim2.new(0, 120, 0, 40)
+    billboard.StudsOffset = Vector3.new(0, 3.5, 0)
+    billboard.AlwaysOnTop = true
+    billboard.MaxDistance = 1500
+    billboard.Active = true
+    billboard.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    billboard.Parent = head
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.Text = player.Name
+    textLabel.TextColor3 = self.Settings.Players.Color
+    textLabel.TextSize = 14
+    textLabel.Font = Enum.Font.RobotoMono
+    textLabel.TextStrokeTransparency = 0.5
+    textLabel.TextStrokeColor3 = Color3.new(0, 0, 0)
+    textLabel.Parent = billboard
+    self.PlayersESP[player] = billboard
+    return billboard
+end
+
+function ESP_System:UpdatePlayersESP()
+    if not self.Settings.Players.Enabled then self:ClearPlayersESP() return end
+    for player, esp in pairs(self.PlayersESP) do
+        if player and player.Character and esp and esp.Parent then
+            local character = player.Character
+            local head = character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+            local textLabel = esp:FindFirstChildOfClass("TextLabel")
+            if head and textLabel and ESP_LocalPlayer.Character and ESP_LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                local distance = self:GetDistanceFromPlayer(head.Position)
+                local textColor = self.Settings.Players.Color
+                local extraText = ""
+                if character:FindFirstChild("Revives") then
+                    textColor = Color3.fromRGB(255, 255, 0)
+                    extraText = "] [Revives"
+                elseif character:GetAttribute("Downed") then
+                    textColor = Color3.fromRGB(255, 0, 0)
+                    extraText = "] [Downed"
+                end
+                textLabel.Text = string.format("%s [%dm%s]", player.Name, math.floor(distance), extraText)
+                textLabel.TextColor3 = textColor
+            end
+        else
+            if esp then pcall(function() esp:Destroy() end) end
+            self.PlayersESP[player] = nil
+        end
+    end
+    for _, player in ipairs(ESP_Players:GetPlayers()) do
+        if player ~= ESP_LocalPlayer and not self.PlayersESP[player] and player.Character then
+            self:CreatePlayerESP(player)
+        end
+    end
+end
+
+function ESP_System:ClearPlayersESP()
+    for _, esp in pairs(self.PlayersESP) do pcall(function() esp:Destroy() end) end
+    self.PlayersESP = {}
+end
+
+function ESP_System:UpdateTicketsESP()
+    if not self.Settings.Tickets.Enabled then self:ClearTicketsESP() return end
+    local ticketsFound = {}
+    local gameFolder = workspace:FindFirstChild("Game")
+    if gameFolder then
+        local effects = gameFolder:FindFirstChild("Effects")
+        if effects then
+            local tickets = effects:FindFirstChild("Tickets")
+            if tickets then
+                for _, ticket in pairs(tickets:GetChildren()) do
+                    if ticket:IsA("BasePart") or ticket:IsA("Model") then
+                        local part = ticket:IsA("Model") and
+                            (ticket:FindFirstChild("HumanoidRootPart") or
+                             ticket:FindFirstChild("Head") or
+                             ticket.PrimaryPart or
+                             ticket:FindFirstChildWhichIsA("BasePart")) or
+                            ticket:IsA("BasePart") and ticket
+                        if part then ticketsFound[ticket] = part end
+                    end
+                end
+            end
+        end
+    end
+    for ticket, esp in pairs(self.TicketsESP) do
+        if not ticketsFound[ticket] or not ticket.Parent then
+            pcall(function() esp:Destroy() end)
+            self.TicketsESP[ticket] = nil
+        end
+    end
+    for ticket, part in pairs(ticketsFound) do
+        if not self.TicketsESP[ticket] then
+            local billboard = Instance.new("BillboardGui")
+            billboard.Name = "DraconicTicketESP"
+            billboard.Adornee = part
+            billboard.Size = UDim2.new(0, 100, 0, 30)
+            billboard.StudsOffset = Vector3.new(0, 2, 0)
+            billboard.AlwaysOnTop = true
+            billboard.MaxDistance = 1000
+            billboard.Parent = part
+            local textLabel = Instance.new("TextLabel")
+            textLabel.Size = UDim2.new(1, 0, 1, 0)
+            textLabel.BackgroundTransparency = 1
+            textLabel.TextColor3 = self.Settings.Tickets.Color
+            textLabel.TextSize = 12
+            textLabel.Font = Enum.Font.RobotoMono
+            textLabel.Parent = billboard
+            local stroke = Instance.new("UIStroke")
+            stroke.Color = Color3.new(0, 0, 0)
+            stroke.Thickness = 0.5
+            stroke.Parent = textLabel
+            self.TicketsESP[ticket] = billboard
+        end
+        local esp = self.TicketsESP[ticket]
+        if esp and esp.Parent and esp:FindFirstChildOfClass("TextLabel") then
+            local textLabel = esp:FindFirstChildOfClass("TextLabel")
+            local distance = self:GetDistanceFromPlayer(part.Position)
+            textLabel.Text = string.format("Ticket [%d m]", math.floor(distance))
+        end
+    end
+end
+
+function ESP_System:ClearTicketsESP()
+    for _, esp in pairs(self.TicketsESP) do pcall(function() esp:Destroy() end) end
+    self.TicketsESP = {}
+end
+
+function ESP_System:CreateFakePartForModel(model)
+    if not model or not model:IsA("Model") then return nil end
+    local fakePart = Instance.new("Part")
+    fakePart.Name = "DraconicESP_Anchor"
+    fakePart.Size = Vector3.new(0.1, 0.1, 0.1)
+    fakePart.Transparency = 1
+    fakePart.CanCollide = false
+    fakePart.Anchored = true
+    fakePart.Parent = model
+    if model.PrimaryPart then
+        fakePart.CFrame = model.PrimaryPart.CFrame
+    else
+        local success, center = pcall(function() return model:GetBoundingBox() end)
+        if success and center then
+            fakePart.CFrame = center
+        else
+            local firstPart = model:FindFirstChildWhichIsA("BasePart")
+            if firstPart then fakePart.CFrame = firstPart.CFrame end
+        end
+    end
+    return fakePart
+end
+
+function ESP_System:CreateNextbotESP(model, part)
+    if not part then return nil end
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "DraconicNextbotESP"
+    billboard.Parent = part
+    billboard.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    billboard.AlwaysOnTop = true
+    billboard.LightInfluence = 1
+    billboard.Size = UDim2.new(0, 200, 0, 50)
+    billboard.StudsOffset = Vector3.new(0, 3, 0)
+    billboard.MaxDistance = 1000
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Parent = billboard
+    textLabel.BackgroundTransparency = 1
+    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.TextScaled = false
+    textLabel.Font = Enum.Font.RobotoMono
+    textLabel.TextStrokeTransparency = 0.5
+    textLabel.TextSize = 16
+    textLabel.TextColor3 = self.Settings.Nextbots.Color
+    return billboard
+end
+
+function ESP_System:UpdateNextbotESP(model, part)
+    if not part then return false end
+    local esp = part:FindFirstChild("DraconicNextbotESP")
+    if esp and esp:FindFirstChildOfClass("TextLabel") then
+        local label = esp:FindFirstChildOfClass("TextLabel")
+        local distance = self:GetDistanceFromPlayer(part.Position)
+        label.Text = string.format("%s [%d m]", model.Name, math.floor(distance))
+        return true
+    end
+    return false
+end
+
+function ESP_System:ScanNextbots()
+    if not self.Settings.Nextbots.Enabled then self:ClearNextbotsESP() return end
+    local nextbots = {}
+    local playersFolder = workspace:FindFirstChild("Game") and workspace.Game:FindFirstChild("Players")
+    if playersFolder then
+        for _, model in ipairs(playersFolder:GetChildren()) do
+            if model:IsA("Model") and self:IsNextbot(model) then nextbots[model] = model end
+        end
+    end
+    local npcsFolder = workspace:FindFirstChild("NPCs")
+    if npcsFolder then
+        for _, model in ipairs(npcsFolder:GetChildren()) do
+            if model:IsA("Model") and self:IsNextbot(model) then nextbots[model] = model end
+        end
+    end
+    for model in pairs(nextbots) do
+        if not self.NextbotsESP[model] then
+            local fakePart = model:FindFirstChild("DraconicESP_Anchor") or self:CreateFakePartForModel(model)
+            if fakePart then
+                local esp = self:CreateNextbotESP(model, fakePart)
+                if esp then
+                    self:UpdateNextbotESP(model, fakePart)
+                    self.NextbotsESP[model] = { esp = esp, part = fakePart, lastUpdate = tick() }
+                end
+            end
+        else
+            local data = self.NextbotsESP[model]
+            if data.part and data.part.Parent == model then
+                if model.PrimaryPart then
+                    data.part.CFrame = model.PrimaryPart.CFrame
+                else
+                    local success, center = pcall(function() return model:GetBoundingBox() end)
+                    if success and center then data.part.CFrame = center end
+                end
+                self:UpdateNextbotESP(model, data.part)
+                data.lastUpdate = tick()
+            else
+                local fakePart = self:CreateFakePartForModel(model)
+                if fakePart then
+                    data.part = fakePart
+                    local esp = self:CreateNextbotESP(model, fakePart)
+                    if esp then
+                        self:UpdateNextbotESP(model, fakePart)
+                        data.esp = esp
+                        data.lastUpdate = tick()
+                    end
+                end
+            end
+        end
+    end
+    for model, data in pairs(self.NextbotsESP) do
+        if not nextbots[model] or not model.Parent then
+            pcall(function()
+                if data.esp then data.esp:Destroy() end
+                if data.part and data.part.Name == "DraconicESP_Anchor" then data.part:Destroy() end
+            end)
+            self.NextbotsESP[model] = nil
+        end
+    end
+end
+
+function ESP_System:ClearNextbotsESP()
+    for _, data in pairs(self.NextbotsESP) do
+        pcall(function()
+            if data.esp then data.esp:Destroy() end
+            if data.part and data.part.Name == "DraconicESP_Anchor" then data.part:Destroy() end
+        end)
+    end
+    self.NextbotsESP = {}
+end
+
+-- ==================== CHAMS PLAYERS ====================
+function ESP_System:CreatePlayerChams(player)
+    if not self.Settings.ChamsPlayers.Enabled or player == ESP_LocalPlayer then return end
+    local character = player.Character
+    if not character then return end
+
+    if self.ChamsPlayers[player] then
+        pcall(function() self.ChamsPlayers[player]:Destroy() end)
+    end
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "DraconicPlayerChams"
+    highlight.FillColor = self.Settings.ChamsPlayers.FillColor
+    highlight.OutlineColor = self.Settings.ChamsPlayers.OutlineColor
+    highlight.FillTransparency = self.Settings.ChamsPlayers.FillTransparency
+    highlight.OutlineTransparency = self.Settings.ChamsPlayers.OutlineTransparency
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = character
+
+    self.ChamsPlayers[player] = highlight
+    return highlight
+end
+
+function ESP_System:UpdatePlayerChams()
+    if not self.Settings.ChamsPlayers.Enabled then
+        self:ClearPlayerChams()
+        return
+    end
+
+    for player, highlight in pairs(self.ChamsPlayers) do
+        if not player or not player.Character or not highlight.Parent then
+            pcall(function() if highlight then highlight:Destroy() end end)
+            self.ChamsPlayers[player] = nil
+        else
+            -- Warna berubah jika downed
+            if player.Character:GetAttribute("Downed") then
+                highlight.FillColor = Color3.fromRGB(255, 0, 0)
+                highlight.OutlineColor = Color3.fromRGB(255, 255, 0)
+            else
+                highlight.FillColor = self.Settings.ChamsPlayers.FillColor
+                highlight.OutlineColor = self.Settings.ChamsPlayers.OutlineColor
+            end
+        end
+    end
+
+    for _, player in ipairs(ESP_Players:GetPlayers()) do
+        if player ~= ESP_LocalPlayer and not self.ChamsPlayers[player] and player.Character then
+            self:CreatePlayerChams(player)
+        end
+    end
+end
+
+function ESP_System:ClearPlayerChams()
+    for _, highlight in pairs(self.ChamsPlayers) do
+        pcall(function() highlight:Destroy() end)
+    end
+    self.ChamsPlayers = {}
+end
+
+
+-- ==================== TRACER DOWNED ====================
+function ESP_System:UpdateTracerDowned()
+    if not self.Settings.TracerDowned.Enabled then
+        self:ClearTracerDowned()
+        return
+    end
+
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+    if not ESP_LocalPlayer.Character then return end
+
+    local screenSize = camera.ViewportSize
+    local startPos = Vector2.new(screenSize.X / 2, screenSize.Y)
+
+    local activePlayers = {}
+
+    for _, player in ipairs(ESP_Players:GetPlayers()) do
+        if player ~= ESP_LocalPlayer and player.Character then
+            if player.Character:GetAttribute("Downed") then
+                local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+                    or player.Character:FindFirstChild("Head")
+                if hrp then
+                    activePlayers[player] = hrp
+                end
+            end
+        end
+    end
+
+    -- Hapus tracer player yang sudah tidak downed
+    for player, line in pairs(self.TracerDrawings) do
+        if not activePlayers[player] then
+            pcall(function() line:Remove() end)
+            self.TracerDrawings[player] = nil
+        end
+    end
+
+    -- Buat/update tracer
+    for player, hrp in pairs(activePlayers) do
+        local success, screenPos, onScreen = pcall(function()
+            return camera:WorldToViewportPoint(hrp.Position)
+        end)
+
+        if success and onScreen then
+            if not self.TracerDrawings[player] then
+                local line = Drawing.new("Line")
+                line.Visible = true
+                line.Color = self.Settings.TracerDowned.Color
+                line.Thickness = self.Settings.TracerDowned.Thickness
+                line.Transparency = 1
+                self.TracerDrawings[player] = line
+            end
+
+            local line = self.TracerDrawings[player]
+            line.From = startPos
+            line.To = Vector2.new(screenPos.X, screenPos.Y)
+            line.Color = self.Settings.TracerDowned.Color
+            line.Thickness = self.Settings.TracerDowned.Thickness
+            line.Visible = true
+        else
+            if self.TracerDrawings[player] then
+                self.TracerDrawings[player].Visible = false
+            end
+        end
+    end
+end
+
+function ESP_System:ClearTracerDowned()
+    for _, line in pairs(self.TracerDrawings) do
+        pcall(function() line:Remove() end)
+    end
+    self.TracerDrawings = {}
+end
+
+-- ==================== TRACER ALL PLAYERS ====================
+function ESP_System:UpdateTracerAll()
+    if not self.Settings.TracerAll.Enabled then
+        self:ClearTracerAll()
+        return
+    end
+
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+    if not ESP_LocalPlayer.Character then return end
+
+    local screenSize = camera.ViewportSize
+    local startPos = Vector2.new(screenSize.X / 2, screenSize.Y)
+
+    local activePlayers = {}
+
+    for _, player in ipairs(ESP_Players:GetPlayers()) do
+        if player ~= ESP_LocalPlayer and player.Character then
+            local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+                or player.Character:FindFirstChild("Head")
+            if hrp then
+                activePlayers[player] = {
+                    hrp = hrp,
+                    downed = player.Character:GetAttribute("Downed") == true
+                }
+            end
+        end
+    end
+
+    -- Hapus tracer player yang sudah tidak ada
+    for player, line in pairs(self.TracerAllDrawings) do
+        if not activePlayers[player] then
+            pcall(function() line:Remove() end)
+            self.TracerAllDrawings[player] = nil
+        end
+    end
+
+    -- Buat/update tracer
+    for player, data in pairs(activePlayers) do
+        local success, screenPos, onScreen = pcall(function()
+            return camera:WorldToViewportPoint(data.hrp.Position)
+        end)
+
+        if success and onScreen then
+            if not self.TracerAllDrawings[player] then
+                local line = Drawing.new("Line")
+                line.Visible = true
+                line.Thickness = self.Settings.TracerAll.Thickness
+                line.Transparency = 1
+                self.TracerAllDrawings[player] = line
+            end
+
+            local line = self.TracerAllDrawings[player]
+            line.From = startPos
+            line.To = Vector2.new(screenPos.X, screenPos.Y)
+            line.Thickness = self.Settings.TracerAll.Thickness
+            line.Visible = true
+
+            -- Warna berbeda saat downed
+            if data.downed then
+                line.Color = self.Settings.TracerAll.ColorDowned
+            else
+                line.Color = self.Settings.TracerAll.ColorNormal
+            end
+        else
+            if self.TracerAllDrawings[player] then
+                self.TracerAllDrawings[player].Visible = false
+            end
+        end
+    end
+end
+
+function ESP_System:ClearTracerAll()
+    for _, line in pairs(self.TracerAllDrawings) do
+        pcall(function() line:Remove() end)
+    end
+    self.TracerAllDrawings = {}
+end
+
+function ESP_System:Start()
+    if self.Running then return end
+    self.Running = true
+    self:GetNextbotNames()
+    for _, p in ipairs(ESP_Players:GetPlayers()) do
+        if p ~= ESP_LocalPlayer then
+            if p.Character then self:CreatePlayerESP(p) end
+            p.CharacterAdded:Connect(function()
+                task.wait(0.5)
+                if self.Settings.Players.Enabled then self:CreatePlayerESP(p) end
+            end)
+        end
+    end
+    ESP_Players.PlayerAdded:Connect(function(p)
+        if p ~= ESP_LocalPlayer then
+            p.CharacterAdded:Connect(function()
+                task.wait(0.5)
+                if self.Settings.Players.Enabled then self:CreatePlayerESP(p) end
+            end)
+        end
+    end)
+    ESP_Players.PlayerRemoving:Connect(function(p)
+        if self.PlayersESP[p] then
+            pcall(function() self.PlayersESP[p]:Destroy() end)
+            self.PlayersESP[p] = nil
+        end
+    end)
+    ESP_LocalPlayer.CharacterAdded:Connect(function()
+        task.wait(1)
+        if self.Running then
+            self:ClearPlayersESP()
+            self:ClearNextbotsESP()
+            for _, p in ipairs(ESP_Players:GetPlayers()) do
+                if p ~= ESP_LocalPlayer and p.Character then self:CreatePlayerESP(p) end
+            end
+        end
+    end)
+    self.Connections.Main = ESP_RunService.Heartbeat:Connect(function()
+    if not self.Running then return end
+    pcall(function()
+        self:UpdatePlayersESP()
+        self:UpdateTicketsESP()
+        self:ScanNextbots()
+        self:UpdatePlayerChams()
+        self:UpdateTracerDowned()
+        self:UpdateTracerAll() 
+         end)
+    end)
+end
+
+function ESP_System:Stop()
+    self.Running = false
+    if self.Connections.Main then
+        self.Connections.Main:Disconnect()
+        self.Connections.Main = nil
+    end
+    self:ClearPlayersESP()
+    self:ClearTicketsESP()
+    self:ClearNextbotsESP()
+    self:ClearPlayerChams()
+    self:ClearTracerDowned()
+    self:ClearTracerAll() 
+end
+
 -- ========================================================================== --
 --                              LOAD WINDUI                                    --
 -- ========================================================================== --
@@ -3046,6 +3671,7 @@ local UpadTab = Tabs.Imp:Tab({ Title = "Update Log", Icon = "scroll-text" })
 -- Main Section Tabs
 local AutoTab = Tabs.Main:Tab({ Title = "Auto", Icon = "zap" })
 local TeleportTab = Tabs.Main:Tab({ Title = "Teleport", Icon = "navigation" })
+local ESPTab = Tabs.Main:Tab({ Title = "ESP", Icon = "scan-eye" })
 local VisualTab = Tabs.Main:Tab({ Title = "Visual", Icon = "eye" })
 -- 👇 TAMBAHKAN INI DI SINI (setelah VisualTab, sebelum MiscTab)
 local MovementTab = Tabs.Main:Tab({ Title = "Movement", Icon = "activity" })
@@ -3561,6 +4187,413 @@ TeleportTab:Button({
     Callback = function()
         TeleportFeaturesModule.TeleportToNearestDowned()
     end
+})
+
+-- ========================================================================== --
+--                              ESP TAB                                        --
+-- ========================================================================== --
+
+-- ==================== PLAYERS ESP ====================
+ESPTab:Section({ Title = "Players ESP", TextSize = 20 })
+ESPTab:Divider()
+
+ESPTab:Toggle({
+    Title = "Players ESP",
+    Desc = "Tampilkan nama + jarak + status player lain",
+    Value = false,
+    Callback = function(state)
+        ESP_System.Settings.Players.Enabled = state
+        if state then
+            if not ESP_System.Running then ESP_System:Start() end
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= player and p.Character then
+                    ESP_System:CreatePlayerESP(p)
+                end
+            end
+            Success("Players ESP", "Aktif", 2)
+        else
+            ESP_System:ClearPlayersESP()
+            if not ESP_System.Settings.Tickets.Enabled and not ESP_System.Settings.Nextbots.Enabled then
+                ESP_System:Stop()
+            end
+            Info("Players ESP", "Dimatikan", 2)
+        end
+    end
+})
+
+ESPTab:Dropdown({
+    Title = "Players ESP Color",
+    Desc = "Pilih warna label player",
+    Values = { "Putih", "Merah", "Hijau", "Biru", "Kuning", "Pink", "Cyan" },
+    Value = "Putih",
+    Callback = function(value)
+        local colors = {
+            Putih  = Color3.fromRGB(255, 255, 255),
+            Merah  = Color3.fromRGB(255, 50,  50),
+            Hijau  = Color3.fromRGB(50,  255, 50),
+            Biru   = Color3.fromRGB(50,  150, 255),
+            Kuning = Color3.fromRGB(255, 255, 0),
+            Pink   = Color3.fromRGB(255, 100, 255),
+            Cyan   = Color3.fromRGB(0,   255, 255),
+        }
+        ESP_System.Settings.Players.Color = colors[value] or Color3.fromRGB(255,255,255)
+        Success("ESP Color", "Players: " .. value, 1)
+    end
+})
+
+ESPTab:Paragraph({
+    Title = "Info Players ESP",
+    Desc = "• Putih = normal\n• Merah = player downed\n• Kuning = player reviving",
+    ThumbnailSize = 0
+})
+
+ESPTab:Divider()
+
+-- ==================== TICKETS ESP ====================
+ESPTab:Section({ Title = "Tickets ESP", TextSize = 20 })
+ESPTab:Divider()
+
+ESPTab:Toggle({
+    Title = "Tickets ESP",
+    Desc = "Tampilkan lokasi + jarak ticket di map",
+    Value = false,
+    Callback = function(state)
+        ESP_System.Settings.Tickets.Enabled = state
+        if state then
+            if not ESP_System.Running then ESP_System:Start() end
+            Success("Tickets ESP", "Aktif", 2)
+        else
+            ESP_System:ClearTicketsESP()
+            if not ESP_System.Settings.Players.Enabled and not ESP_System.Settings.Nextbots.Enabled then
+                ESP_System:Stop()
+            end
+            Info("Tickets ESP", "Dimatikan", 2)
+        end
+    end
+})
+
+ESPTab:Dropdown({
+    Title = "Tickets ESP Color",
+    Desc = "Pilih warna label ticket",
+    Values = { "Oranye", "Putih", "Kuning", "Hijau", "Pink" },
+    Value = "Oranye",
+    Callback = function(value)
+        local colors = {
+            Oranye = Color3.fromRGB(255, 165, 0),
+            Putih  = Color3.fromRGB(255, 255, 255),
+            Kuning = Color3.fromRGB(255, 255, 0),
+            Hijau  = Color3.fromRGB(50,  255, 50),
+            Pink   = Color3.fromRGB(255, 100, 255),
+        }
+        ESP_System.Settings.Tickets.Color = colors[value] or Color3.fromRGB(255,165,0)
+        Success("ESP Color", "Tickets: " .. value, 1)
+    end
+})
+
+ESPTab:Divider()
+
+-- ==================== NEXTBOTS ESP ====================
+ESPTab:Section({ Title = "Nextbots ESP", TextSize = 20 })
+ESPTab:Divider()
+
+ESPTab:Toggle({
+    Title = "Nextbots ESP",
+    Desc = "Tampilkan lokasi + jarak nextbot/monster",
+    Value = false,
+    Callback = function(state)
+        ESP_System.Settings.Nextbots.Enabled = state
+        if state then
+            if not ESP_System.Running then ESP_System:Start() end
+            Success("Nextbots ESP", "Aktif", 2)
+        else
+            ESP_System:ClearNextbotsESP()
+            if not ESP_System.Settings.Players.Enabled and not ESP_System.Settings.Tickets.Enabled then
+                ESP_System:Stop()
+            end
+            Info("Nextbots ESP", "Dimatikan", 2)
+        end
+    end
+})
+
+ESPTab:Dropdown({
+    Title = "Nextbots ESP Color",
+    Desc = "Pilih warna label nextbot",
+    Values = { "Merah", "Oranye", "Putih", "Kuning", "Pink" },
+    Value = "Merah",
+    Callback = function(value)
+        local colors = {
+            Merah  = Color3.fromRGB(255, 50,  50),
+            Oranye = Color3.fromRGB(255, 165, 0),
+            Putih  = Color3.fromRGB(255, 255, 255),
+            Kuning = Color3.fromRGB(255, 255, 0),
+            Pink   = Color3.fromRGB(255, 100, 255),
+        }
+        ESP_System.Settings.Nextbots.Color = colors[value] or Color3.fromRGB(255,50,50)
+        Success("ESP Color", "Nextbots: " .. value, 1)
+    end
+})
+
+ESPTab:Divider()
+
+-- ==================== MASTER CONTROL ====================
+ESPTab:Section({ Title = "Master Control", TextSize = 20 })
+ESPTab:Divider()
+
+ESPTab:Button({
+    Title = "Enable All ESP",
+    Desc = "Aktifkan semua ESP sekaligus",
+    Variant = "Primary",
+    Callback = function()
+        ESP_System.Settings.Players.Enabled = true
+        ESP_System.Settings.Tickets.Enabled = true
+        ESP_System.Settings.Nextbots.Enabled = true
+        if not ESP_System.Running then ESP_System:Start() end
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= player and p.Character then
+                ESP_System:CreatePlayerESP(p)
+            end
+        end
+        Success("ESP", "Semua ESP diaktifkan!", 2)
+    end
+})
+
+ESPTab:Button({
+    Title = "Disable All ESP",
+    Desc = "Matikan semua ESP sekaligus",
+    Variant = "Secondary",
+    Callback = function()
+        ESP_System.Settings.Players.Enabled = false
+        ESP_System.Settings.Tickets.Enabled = false
+        ESP_System.Settings.Nextbots.Enabled = false
+        ESP_System:Stop()
+        Info("ESP", "Semua ESP dimatikan!", 2)
+    end
+})
+
+ESPTab:Divider()
+
+-- ==================== CHAMS PLAYERS ====================
+ESPTab:Section({ Title = "Chams - Players", TextSize = 20 })
+ESPTab:Divider()
+
+ESPTab:Toggle({
+    Title = "Chams Players",
+    Desc = "Highlight player terlihat melalui tembok",
+    Value = false,
+    Callback = function(state)
+        ESP_System.Settings.ChamsPlayers.Enabled = state
+        if state then
+            if not ESP_System.Running then ESP_System:Start() end
+            Success("Chams", "Players Chams aktif", 2)
+        else
+            ESP_System:ClearPlayerChams()
+            Info("Chams", "Players Chams dimatikan", 2)
+        end
+    end
+})
+
+ESPTab:Dropdown({
+    Title = "Chams Fill Color",
+    Desc = "Warna isi body player",
+    Values = { "Merah", "Biru", "Hijau", "Kuning", "Pink", "Cyan", "Putih", "Oranye" },
+    Value = "Merah",
+    Callback = function(value)
+        local colors = {
+            Merah  = Color3.fromRGB(255, 0,   0),
+            Biru   = Color3.fromRGB(0,   100, 255),
+            Hijau  = Color3.fromRGB(0,   255, 0),
+            Kuning = Color3.fromRGB(255, 255, 0),
+            Pink   = Color3.fromRGB(255, 0,   255),
+            Cyan   = Color3.fromRGB(0,   255, 255),
+            Putih  = Color3.fromRGB(255, 255, 255),
+            Oranye = Color3.fromRGB(255, 165, 0),
+        }
+        ESP_System.Settings.ChamsPlayers.FillColor = colors[value] or Color3.fromRGB(255,0,0)
+        Success("Chams", "Fill color: " .. value, 1)
+    end
+})
+
+ESPTab:Dropdown({
+    Title = "Chams Outline Color",
+    Desc = "Warna garis tepi body player",
+    Values = { "Putih", "Kuning", "Merah", "Cyan", "Hijau" },
+    Value = "Putih",
+    Callback = function(value)
+        local colors = {
+            Putih  = Color3.fromRGB(255, 255, 255),
+            Kuning = Color3.fromRGB(255, 255, 0),
+            Merah  = Color3.fromRGB(255, 0,   0),
+            Cyan   = Color3.fromRGB(0,   255, 255),
+            Hijau  = Color3.fromRGB(0,   255, 0),
+        }
+        ESP_System.Settings.ChamsPlayers.OutlineColor = colors[value] or Color3.fromRGB(255,255,255)
+        Success("Chams", "Outline color: " .. value, 1)
+    end
+})
+
+ESPTab:Dropdown({
+    Title = "Chams Transparency",
+    Desc = "Transparansi isi chams",
+    Values = { "Solid (0%)", "Tipis (30%)", "Setengah (50%)", "Transparan (70%)" },
+    Value = "Setengah (50%)",
+    Callback = function(value)
+        local levels = {
+            ["Solid (0%)"]       = 0,
+            ["Tipis (30%)"]      = 0.3,
+            ["Setengah (50%)"]   = 0.5,
+            ["Transparan (70%)"] = 0.7,
+        }
+        ESP_System.Settings.ChamsPlayers.FillTransparency = levels[value] or 0.5
+        Success("Chams", "Transparency: " .. value, 1)
+    end
+})
+
+ESPTab:Paragraph({
+    Title = "Info Chams Players",
+    Desc = "• Terlihat melalui tembok\n• Saat player DOWNED → otomatis warna Merah + Kuning\n• Bisa dikombinasikan dengan Players ESP",
+    ThumbnailSize = 0
+})
+
+ESPTab:Divider()
+
+-- ==================== TRACER DOWNED ====================
+ESPTab:Section({ Title = "Tracer - Downed Only", TextSize = 20 })
+ESPTab:Divider()
+
+ESPTab:Toggle({
+    Title = "Tracer Downed",
+    Desc = "Garis ke player yang SEDANG downed saja",
+    Value = false,
+    Callback = function(state)
+        ESP_System.Settings.TracerDowned.Enabled = state
+        if state then
+            if not ESP_System.Running then ESP_System:Start() end
+            Success("Tracer", "Downed Tracer aktif", 2)
+        else
+            ESP_System:ClearTracerDowned()
+            Info("Tracer", "Downed Tracer dimatikan", 2)
+        end
+    end
+})
+
+ESPTab:Dropdown({
+    Title = "Tracer Downed Color",
+    Desc = "Warna garis tracer downed",
+    Values = { "Merah", "Kuning", "Putih", "Cyan", "Hijau", "Pink", "Oranye" },
+    Value = "Merah",
+    Callback = function(value)
+        local colors = {
+            Merah  = Color3.fromRGB(255, 50,  50),
+            Kuning = Color3.fromRGB(255, 255, 0),
+            Putih  = Color3.fromRGB(255, 255, 255),
+            Cyan   = Color3.fromRGB(0,   255, 255),
+            Hijau  = Color3.fromRGB(50,  255, 50),
+            Pink   = Color3.fromRGB(255, 100, 255),
+            Oranye = Color3.fromRGB(255, 165, 0),
+        }
+        ESP_System.Settings.TracerDowned.Color = colors[value] or Color3.fromRGB(255,50,50)
+        Success("Tracer", "Warna: " .. value, 1)
+    end
+})
+
+ESPTab:Dropdown({
+    Title = "Tracer Downed Thickness",
+    Desc = "Ketebalan garis tracer downed",
+    Values = { "Tipis (1)", "Normal (2)", "Tebal (3)", "Sangat Tebal (5)" },
+    Value = "Normal (2)",
+    Callback = function(value)
+        local thickness = {
+            ["Tipis (1)"]        = 1,
+            ["Normal (2)"]       = 2,
+            ["Tebal (3)"]        = 3,
+            ["Sangat Tebal (5)"] = 5,
+        }
+        ESP_System.Settings.TracerDowned.Thickness = thickness[value] or 2
+        Success("Tracer", "Thickness: " .. value, 1)
+    end
+})
+
+ESPTab:Divider()
+
+-- ==================== TRACER ALL PLAYERS ====================
+ESPTab:Section({ Title = "Tracer - All Players", TextSize = 20 })
+ESPTab:Divider()
+
+ESPTab:Toggle({
+    Title = "Tracer All Players",
+    Desc = "Garis ke SEMUA player (warna berubah saat downed)",
+    Value = false,
+    Callback = function(state)
+        ESP_System.Settings.TracerAll.Enabled = state
+        if state then
+            if not ESP_System.Running then ESP_System:Start() end
+            Success("Tracer", "All Players Tracer aktif", 2)
+        else
+            ESP_System:ClearTracerAll()
+            Info("Tracer", "All Players Tracer dimatikan", 2)
+        end
+    end
+})
+
+ESPTab:Dropdown({
+    Title = "Tracer Normal Color",
+    Desc = "Warna garis saat player normal",
+    Values = { "Putih", "Cyan", "Hijau", "Biru", "Kuning", "Pink", "Oranye" },
+    Value = "Putih",
+    Callback = function(value)
+        local colors = {
+            Putih  = Color3.fromRGB(255, 255, 255),
+            Cyan   = Color3.fromRGB(0,   255, 255),
+            Hijau  = Color3.fromRGB(50,  255, 50),
+            Biru   = Color3.fromRGB(50,  150, 255),
+            Kuning = Color3.fromRGB(255, 255, 0),
+            Pink   = Color3.fromRGB(255, 100, 255),
+            Oranye = Color3.fromRGB(255, 165, 0),
+        }
+        ESP_System.Settings.TracerAll.ColorNormal = colors[value] or Color3.fromRGB(255,255,255)
+        Success("Tracer", "Normal color: " .. value, 1)
+    end
+})
+
+ESPTab:Dropdown({
+    Title = "Tracer Downed Color",
+    Desc = "Warna garis saat player downed",
+    Values = { "Merah", "Kuning", "Oranye", "Pink", "Cyan" },
+    Value = "Merah",
+    Callback = function(value)
+        local colors = {
+            Merah  = Color3.fromRGB(255, 50,  50),
+            Kuning = Color3.fromRGB(255, 255, 0),
+            Oranye = Color3.fromRGB(255, 165, 0),
+            Pink   = Color3.fromRGB(255, 100, 255),
+            Cyan   = Color3.fromRGB(0,   255, 255),
+        }
+        ESP_System.Settings.TracerAll.ColorDowned = colors[value] or Color3.fromRGB(255,50,50)
+        Success("Tracer", "Downed color: " .. value, 1)
+    end
+})
+
+ESPTab:Dropdown({
+    Title = "Tracer All Thickness",
+    Desc = "Ketebalan garis tracer",
+    Values = { "Tipis (1)", "Normal (2)", "Tebal (3)", "Sangat Tebal (5)" },
+    Value = "Normal (2)",
+    Callback = function(value)
+        local thickness = {
+            ["Tipis (1)"]        = 1,
+            ["Normal (2)"]       = 2,
+            ["Tebal (3)"]        = 3,
+            ["Sangat Tebal (5)"] = 5,
+        }
+        ESP_System.Settings.TracerAll.Thickness = thickness[value] or 2
+        Success("Tracer", "Thickness: " .. value, 1)
+    end
+})
+
+ESPTab:Paragraph({
+    Title = "Info Tracer All",
+    Desc = "• Garis ke SEMUA player terlihat\n• Warna Normal = player sehat\n• Warna Downed = otomatis berubah saat player downed\n• Bisa dipakai bersamaan dengan Tracer Downed",
+    ThumbnailSize = 0
 })
 
 -- ========================================================================== --
