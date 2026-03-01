@@ -436,7 +436,7 @@ function TeleportModule.GetMapCount()
 end
 
 function TeleportModule.GetLastUpdate()
-    return "19 Feb 2026"
+    return "22 Feb 2026"
 end
 
 return TeleportModule
