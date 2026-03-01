@@ -1,5 +1,6 @@
 -- =========================================================
--- ULTRA SMART AUTO KATA (ANTI LUAOBFUSCATOR V2 - ANTI DOUBLE)
+-- ULTRA SMART AUTO KATA V3 - FULL FEATURE
+-- Features: Anti Double, Auto Claim, Score Counter, Auto Join, Win/Lose Notif
 -- =========================================================
 
 if game:IsLoaded() == false then
@@ -13,25 +14,15 @@ local httpget = game.HttpGet
 local loadstr = loadstring
 
 local RayfieldSource = httpget(game, "https://sirius.menu/rayfield")
-if RayfieldSource == nil then
-    warn("Gagal ambil Rayfield source")
-    return
-end
+if RayfieldSource == nil then warn("Gagal ambil Rayfield source") return end
 
 local RayfieldFunction = loadstr(RayfieldSource)
-if RayfieldFunction == nil then
-    warn("Gagal compile Rayfield")
-    return
-end
+if RayfieldFunction == nil then warn("Gagal compile Rayfield") return end
 
 local Rayfield = RayfieldFunction()
-if Rayfield == nil or type(Rayfield) ~= "table" then
-    warn("Rayfield return nil or invalid")
-    return
-end
+if Rayfield == nil or type(Rayfield) ~= "table" then warn("Rayfield return nil or invalid") return end
 print("Rayfield loaded successfully")
 
--- Small delay to ensure Rayfield initializes
 task.wait(0.5)
 
 -- =========================
@@ -46,22 +37,16 @@ local LocalPlayer = Players.LocalPlayer
 -- LOAD WORDLIST + ANTI DOUBLE
 -- =========================
 local kataModule = {}
-local kataSet = {} -- Untuk cek duplikat cepat
+local kataSet = {}
 
 local function downloadWordlist()
     local success, response = pcall(function()
-        return httpget(game, "https://raw.githubusercontent.com/danzzy1we/roblox-script-dump/refs/heads/main/WordListDump/withallcombination2.lua")
+        return httpget(game, "https://raw.githubusercontent.com/dedgbom-dotcom/hi/refs/heads/main/game/sambung-kata/modules/listkata.lua")
     end)
-    
-    if not success or not response then
-        warn("Failed to download wordlist")
-        return false
-    end
+    if not success or not response then warn("Failed to download wordlist") return false end
 
     local content = string.match(response, "return%s*(.+)")
-    if not content then
-        return false
-    end
+    if not content then return false end
 
     content = string.gsub(content, "^%s*{", "")
     content = string.gsub(content, "}%s*$", "")
@@ -72,45 +57,49 @@ local function downloadWordlist()
     for word in string.gmatch(content, '"([^"]+)"') do
         totalProcessed = totalProcessed + 1
         local w = string.lower(word)
-        
-        -- CEK DOUBLE KATA
         if string.len(w) > 1 then
             if kataSet[w] == nil then
-                -- Kata baru (unik)
                 kataSet[w] = true
                 table.insert(kataModule, w)
             else
-                -- Kata double ditemukan!
                 duplicateCount = duplicateCount + 1
             end
         end
     end
 
-    print(string.format("Wordlist loaded: %d total, %d unique, %d duplicates removed", 
+    print(string.format("Wordlist loaded: %d total, %d unique, %d duplicates removed",
         totalProcessed, #kataModule, duplicateCount))
-
     return true
 end
 
 local wordOk = downloadWordlist()
-if not wordOk or #kataModule == 0 then
-    warn("Wordlist gagal dimuat!")
-    return
-end
-
+if not wordOk or #kataModule == 0 then warn("Wordlist gagal dimuat!") return end
 print("Wordlist Loaded (Unique):", #kataModule)
 
 -- =========================
 -- REMOTES
 -- =========================
-local remotes = ReplicatedStorage:WaitForChild("Remotes")
+local remotes = ReplicatedStorage:WaitForChild("Remotes", 10)
+if not remotes then warn("Remotes tidak ditemukan!") return end
 
-local MatchUI = remotes:WaitForChild("MatchUI")
-local SubmitWord = remotes:WaitForChild("SubmitWord")
-local BillboardUpdate = remotes:WaitForChild("BillboardUpdate")
-local BillboardEnd = remotes:WaitForChild("BillboardEnd")
-local TypeSound = remotes:WaitForChild("TypeSound")
-local UsedWordWarn = remotes:WaitForChild("UsedWordWarn")
+local MatchUI             = remotes:WaitForChild("MatchUI", 10)
+local SubmitWord          = remotes:WaitForChild("SubmitWord", 10)
+local BillboardUpdate     = remotes:WaitForChild("BillboardUpdate", 10)
+local BillboardEnd        = remotes:WaitForChild("UpdateBillboard", 10)
+local TypeSound           = remotes:WaitForChild("TypeSound", 10)
+local UsedWordWarn        = remotes:WaitForChild("UsedWordWarn", 10)
+local PlayerCorrect       = remotes:WaitForChild("PlayerCorrect", 10)
+local PlayerHit           = remotes:WaitForChild("PlayerHit", 10)
+local ResultUI            = remotes:WaitForChild("ResultUI", 10)
+local JoinTable           = remotes:WaitForChild("JoinTable", 10)
+local LeaveTable          = remotes:WaitForChild("LeaveTable", 10)
+local ClaimIndexReward    = remotes:WaitForChild("ClaimIndexReward", 10)
+local WordUpdate          = remotes:WaitForChild("WordUpdate", 10)
+
+if not (MatchUI and SubmitWord and BillboardUpdate and BillboardEnd and TypeSound and UsedWordWarn) then
+    warn("Remote utama tidak ditemukan! Cek ulang nama remote.")
+    return
+end
 
 -- =========================
 -- STATE
@@ -119,30 +108,42 @@ local matchActive = false
 local isMyTurn = false
 local serverLetter = ""
 
-local usedWords = {}      -- Kata yang udah dipakai di match ini
-local usedWordsSet = {}   -- Set buat cek cepat
+local usedWords = {}
+local usedWordsSet = {}
 local usedWordsList = {}
 local opponentStreamWord = ""
 
 local autoEnabled = false
 local autoRunning = false
+local autoJoinEnabled = false
+local autoClaimEnabled = false
+
+-- Score counter
+local totalWins = 0
+local totalLosses = 0
+local totalCorrect = 0
 
 local config = {
     minDelay = 350,
     maxDelay = 650,
     aggression = 20,
     minLength = 2,
-    maxLength = 12
+    maxLength = 12,
+    autoJoinDelay = 2  -- detik sebelum auto join meja baru
 }
 
 -- =========================
--- LOGIC FUNCTIONS (DENGAN ANTI DOUBLE)
+-- LOGIC FUNCTIONS
 -- =========================
 local function isUsed(word)
     return usedWordsSet[string.lower(word)] == true
 end
 
 local usedWordsDropdown = nil
+local scoreParagraph = nil
+local statusParagraph = nil
+local startLetterParagraph = nil
+local opponentParagraph = nil
 
 local function addUsedWord(word)
     local w = string.lower(word)
@@ -151,13 +152,7 @@ local function addUsedWord(word)
         usedWords[w] = true
         table.insert(usedWordsList, word)
         if usedWordsDropdown ~= nil then
-            -- Safe update with pcall
-            local success, err = pcall(function()
-                usedWordsDropdown:Set(usedWordsList)
-            end)
-            if not success then
-                warn("Failed to update dropdown:", err)
-            end
+            pcall(function() usedWordsDropdown:Set(usedWordsList) end)
         end
     end
 end
@@ -167,24 +162,16 @@ local function resetUsedWords()
     usedWordsSet = {}
     usedWordsList = {}
     if usedWordsDropdown ~= nil then
-        -- Safe update with empty table
-        local success, err = pcall(function()
-            usedWordsDropdown:Set({})
-        end)
-        if not success then
-            warn("Failed to reset dropdown:", err)
-        end
+        pcall(function() usedWordsDropdown:Set({}) end)
     end
 end
 
 local function getSmartWords(prefix)
     local results = {}
     local lowerPrefix = string.lower(prefix)
-
     for i = 1, #kataModule do
         local word = kataModule[i]
         if string.sub(word, 1, #lowerPrefix) == lowerPrefix then
-            -- CEK APAKAH SUDAH DIPAKAI
             if not isUsed(word) then
                 local len = string.len(word)
                 if len >= config.minLength and len <= config.maxLength then
@@ -193,21 +180,57 @@ local function getSmartWords(prefix)
             end
         end
     end
-
-    table.sort(results, function(a,b)
-        return string.len(a) > string.len(b)
-    end)
-
+    table.sort(results, function(a,b) return string.len(a) > string.len(b) end)
     return results
 end
 
 local function humanDelay()
     local min = config.minDelay
     local max = config.maxDelay
-    if min > max then
-        min = max
-    end
+    if min > max then min = max end
     task.wait(math.random(min, max) / 1000)
+end
+
+-- =========================
+-- UPDATE UI
+-- =========================
+local function updateScoreDisplay()
+    if scoreParagraph == nil then return end
+    pcall(function()
+        scoreParagraph:Set({
+            Title = "📊 Score",
+            Content = string.format("Menang: %d  |  Kalah: %d  |  Kata Benar: %d", totalWins, totalLosses, totalCorrect)
+        })
+    end)
+end
+
+local function updateOpponentStatus()
+    if opponentParagraph == nil then return end
+    local content = ""
+    if matchActive then
+        if isMyTurn then
+            content = "🟢 Giliran Anda"
+        else
+            if opponentStreamWord ~= nil and opponentStreamWord ~= "" then
+                content = "⌨️ Opponent mengetik: " .. tostring(opponentStreamWord)
+            else
+                content = "🔴 Giliran Opponent"
+            end
+        end
+    else
+        content = "⏸️ Match tidak aktif"
+    end
+    pcall(function()
+        opponentParagraph:Set({Title = "Status Opponent", Content = tostring(content)})
+    end)
+end
+
+local function updateStartLetter()
+    if startLetterParagraph == nil then return end
+    local content = serverLetter ~= "" and ("Kata Start: " .. tostring(serverLetter)) or "Kata Start: -"
+    pcall(function()
+        startLetterParagraph:Set({Title = "Kata Start", Content = tostring(content)})
+    end)
 end
 
 -- =========================
@@ -221,7 +244,6 @@ local function startUltraAI()
     if serverLetter == "" then return end
 
     autoRunning = true
-
     humanDelay()
 
     local words = getSmartWords(serverLetter)
@@ -231,7 +253,6 @@ local function startUltraAI()
     end
 
     local selectedWord = words[1]
-
     if config.aggression < 100 then
         local topN = math.floor(#words * (config.aggression/100))
         if topN < 1 then topN = 1 end
@@ -243,68 +264,102 @@ local function startUltraAI()
     local remain = string.sub(selectedWord, #serverLetter + 1)
 
     for i = 1, string.len(remain) do
-        if not matchActive or not isMyTurn then
-            autoRunning = false
-            return
-        end
-
+        if not matchActive or not isMyTurn then autoRunning = false return end
         currentWord = currentWord .. string.sub(remain, i, i)
-
-        local success, err = pcall(function()
+        pcall(function()
             TypeSound:FireServer()
             BillboardUpdate:FireServer(currentWord)
         end)
-        if not success then
-            warn("Failed to send update:", err)
-        end
-
         humanDelay()
     end
 
     humanDelay()
 
-    local success, err = pcall(function()
+    local success = pcall(function()
         SubmitWord:FireServer(selectedWord)
     end)
     if success then
         addUsedWord(selectedWord)
-    else
-        warn("Failed to submit word:", err)
     end
 
     humanDelay()
-    
-    pcall(function()
-        BillboardEnd:FireServer()
-    end)
+    pcall(function() BillboardEnd:FireServer() end)
 
     autoRunning = false
+end
+
+-- =========================
+-- AUTO JOIN
+-- =========================
+local function tryAutoJoin()
+    if not autoJoinEnabled then return end
+    task.wait(config.autoJoinDelay)
+    if matchActive then return end -- udah di match, skip
+    pcall(function()
+        JoinTable:FireServer()
+        print("Auto join meja dijalankan")
+    end)
+end
+
+-- =========================
+-- AUTO CLAIM REWARD
+-- =========================
+local function tryAutoClaim()
+    if not autoClaimEnabled then return end
+    task.wait(1)
+    pcall(function()
+        ClaimIndexReward:FireServer()
+        print("Auto claim reward dijalankan")
+        Rayfield:Notify({
+            Title = "Auto Claim",
+            Content = "Reward berhasil diklaim!",
+            Duration = 3,
+            Image = 4483362458
+        })
+    end)
 end
 
 -- =========================
 -- UI
 -- =========================
 local Window = Rayfield:CreateWindow({
-    Name = "Sambung-kata (Anti Double)",
+    Name = "Sambung-kata V3 - Full Feature",
     LoadingTitle = "Loading Gui...",
     LoadingSubtitle = "automate by sazaraaax",
     ConfigurationSaving = {Enabled = false}
 })
 
+-- ======= MAIN TAB =======
 local MainTab = Window:CreateTab("Main")
 
--- Info Wordlist
-local wordlistInfo = string.format("Wordlist: %d kata unik", #kataModule)
-MainTab:CreateParagraph({Title = "📚 Wordlist Info", Content = wordlistInfo})
+MainTab:CreateParagraph({Title = "📚 Wordlist Info", Content = string.format("Wordlist: %d kata unik", #kataModule)})
+
+-- Score display (assigned to variable)
+scoreParagraph = MainTab:CreateParagraph({
+    Title = "📊 Score",
+    Content = "Menang: 0  |  Kalah: 0  |  Kata Benar: 0"
+})
+
+MainTab:CreateButton({
+    Name = "Reset Score",
+    Callback = function()
+        totalWins = 0
+        totalLosses = 0
+        totalCorrect = 0
+        updateScoreDisplay()
+        Rayfield:Notify({Title = "Score Reset", Content = "Score berhasil direset!", Duration = 2})
+    end
+})
+
+opponentParagraph = MainTab:CreateParagraph({Title = "Status Opponent", Content = "Menunggu..."})
+startLetterParagraph = MainTab:CreateParagraph({Title = "Kata Start", Content = "-"})
 
 MainTab:CreateToggle({
     Name = "Aktifkan Auto",
     CurrentValue = false,
     Callback = function(Value)
         autoEnabled = Value
-        if Value then
-            task.spawn(startUltraAI)
-        end
+        if Value then task.spawn(startUltraAI) end
     end
 })
 
@@ -313,9 +368,7 @@ MainTab:CreateSlider({
     Range = {0,100},
     Increment = 5,
     CurrentValue = config.aggression,
-    Callback = function(Value)
-        config.aggression = Value
-    end
+    Callback = function(Value) config.aggression = Value end
 })
 
 MainTab:CreateSlider({
@@ -323,9 +376,7 @@ MainTab:CreateSlider({
     Range = {10, 500},
     Increment = 5,
     CurrentValue = config.minDelay,
-    Callback = function(Value)
-        config.minDelay = Value
-    end
+    Callback = function(Value) config.minDelay = Value end
 })
 
 MainTab:CreateSlider({
@@ -333,9 +384,7 @@ MainTab:CreateSlider({
     Range = {100, 1000},
     Increment = 5,
     CurrentValue = config.maxDelay,
-    Callback = function(Value)
-        config.maxDelay = Value
-    end
+    Callback = function(Value) config.maxDelay = Value end
 })
 
 MainTab:CreateSlider({
@@ -343,9 +392,7 @@ MainTab:CreateSlider({
     Range = {1, 3},
     Increment = 1,
     CurrentValue = config.minLength,
-    Callback = function(Value)
-        config.minLength = Value
-    end
+    Callback = function(Value) config.minLength = Value end
 })
 
 MainTab:CreateSlider({
@@ -353,12 +400,9 @@ MainTab:CreateSlider({
     Range = {5, 20},
     Increment = 1,
     CurrentValue = config.maxLength,
-    Callback = function(Value)
-        config.maxLength = Value
-    end
+    Callback = function(Value) config.maxLength = Value end
 })
 
--- Create dropdown with empty initial options
 usedWordsDropdown = MainTab:CreateDropdown({
     Name = "Used Words",
     Options = {},
@@ -366,88 +410,78 @@ usedWordsDropdown = MainTab:CreateDropdown({
     Callback = function() end
 })
 
--- ==============================
--- PARAGRAPH OBJECTS
--- ==============================
-local opponentParagraph = MainTab:CreateParagraph({
-    Title = "Status Opponent",
-    Content = "Menunggu..."
-})
+-- ======= AUTO TAB =======
+local AutoTab = Window:CreateTab("Auto Features")
 
-local startLetterParagraph = MainTab:CreateParagraph({
-    Title = "Kata Start",
-    Content = "-"
-})
-
--- ==============================
--- UPDATE FUNCTIONS
--- ==============================
-local function updateOpponentStatus()
-    local content = ""
-
-    if matchActive == true then
-        if isMyTurn == true then
-            content = "Giliran Anda"
-        else
-            if opponentStreamWord ~= nil and opponentStreamWord ~= "" then
-                content = "Opponent mengetik: " .. tostring(opponentStreamWord)
-            else
-                content = "Giliran Opponent"
-            end
+AutoTab:CreateToggle({
+    Name = "Auto Join Meja",
+    CurrentValue = false,
+    Callback = function(Value)
+        autoJoinEnabled = Value
+        if Value then
+            Rayfield:Notify({Title = "Auto Join", Content = "Auto join meja aktif!", Duration = 3})
+            task.spawn(tryAutoJoin)
         end
-    else
-        content = "Match tidak aktif"
     end
+})
 
-    local success, err = pcall(function()
-        opponentParagraph:Set({
-            Title = "Status Opponent",
-            Content = tostring(content)
-        })
-    end)
-    if not success then
-        warn("Failed to update opponent status:", err)
+AutoTab:CreateSlider({
+    Name = "Delay Auto Join (detik)",
+    Range = {1, 10},
+    Increment = 1,
+    CurrentValue = config.autoJoinDelay,
+    Callback = function(Value) config.autoJoinDelay = Value end
+})
+
+AutoTab:CreateButton({
+    Name = "Manual Join Meja",
+    Callback = function()
+        pcall(function() JoinTable:FireServer() end)
+        Rayfield:Notify({Title = "Join Meja", Content = "Mencoba join meja...", Duration = 2})
     end
-end
+})
 
-local function updateStartLetter()
-    local content = ""
-
-    if serverLetter ~= nil and serverLetter ~= "" then
-        content = "Kata Start: " .. tostring(serverLetter)
-    else
-        content = "Kata Start: -"
+AutoTab:CreateButton({
+    Name = "Leave Meja",
+    Callback = function()
+        pcall(function() LeaveTable:FireServer() end)
+        Rayfield:Notify({Title = "Leave Meja", Content = "Keluar dari meja!", Duration = 2})
     end
+})
 
-    local success, err = pcall(function()
-        startLetterParagraph:Set({
-            Title = "Kata Start",
-            Content = tostring(content)
-        })
-    end)
-    if not success then
-        warn("Failed to update start letter:", err)
+AutoTab:CreateDivider()
+
+AutoTab:CreateToggle({
+    Name = "Auto Claim Reward",
+    CurrentValue = false,
+    Callback = function(Value)
+        autoClaimEnabled = Value
+        if Value then
+            Rayfield:Notify({Title = "Auto Claim", Content = "Auto claim reward aktif!", Duration = 3})
+            task.spawn(tryAutoClaim)
+        end
     end
-end
+})
 
--- ==============================
--- TAB ABOUT
--- ==============================
+AutoTab:CreateButton({
+    Name = "Manual Claim Reward",
+    Callback = function()
+        pcall(function() ClaimIndexReward:FireServer() end)
+        Rayfield:Notify({Title = "Claim Reward", Content = "Mencoba klaim reward...", Duration = 2})
+    end
+})
+
+-- ======= ABOUT TAB =======
 local AboutTab = Window:CreateTab("About")
 
 AboutTab:CreateParagraph({
     Title = "Informasi Script",
-    Content = "Auto Kata\nVersi: 2.0 (Anti Double)\nby sazaraaax\nFitur: Auto play dengan wordlist Indonesia + ANTI DUPLICATE KATA\n\nthanks to danzzy1we for the indonesian dictionary"
+    Content = "Auto Kata\nVersi: 3.0 (Full Feature)\nby sazaraaax\n\nFitur:\n- Auto play anti duplicate\n- Score counter (menang/kalah/kata benar)\n- Auto join meja otomatis\n- Notifikasi menang/kalah\n- Auto claim reward\n\nthanks to danzzy1we for the indonesian dictionary"
 })
 
 AboutTab:CreateParagraph({
-    Title = "Informasi Update",
-    Content = "> Anti Double Word System\n> Wordlist unik (" .. #kataModule .. " kata)\n> Deteksi otomatis kata dobel\n> Performa lebih cepat"
-})
-
-AboutTab:CreateParagraph({
-    Title = "Cara Penggunaan",
-    Content = "1. Aktifkan toggle Auto\n2. Atur delay dan agresivitas\n3. Mulai permainan\n4. Script akan otomatis menjawab\n5. Kata dobel di wordlist sudah dihapus"
+    Title = "Changelog V3",
+    Content = "> [NEW] Score counter (win/loss/correct)\n> [NEW] Auto join meja + manual join/leave\n> [NEW] Auto claim reward\n> [NEW] Notifikasi menang/kalah\n> [FIX] BillboardEnd -> UpdateBillboard\n> [KEEP] Anti double word system"
 })
 
 -- =========================
@@ -464,12 +498,12 @@ local function onMatchUI(cmd, value)
         isMyTurn = false
         serverLetter = ""
         resetUsedWords()
+        -- Trigger auto join setelah match selesai
+        task.spawn(tryAutoJoin)
 
     elseif cmd == "StartTurn" then
         isMyTurn = true
-        if autoEnabled then
-            task.spawn(startUltraAI)
-        end
+        if autoEnabled then task.spawn(startUltraAI) end
 
     elseif cmd == "EndTurn" then
         isMyTurn = false
@@ -499,11 +533,58 @@ local function onUsedWarn(word)
     end
 end
 
--- Connect events with pcall for safety
+-- Score: kata benar
+local function onPlayerCorrect()
+    totalCorrect = totalCorrect + 1
+    updateScoreDisplay()
+end
+
+-- Kena hit / salah
+local function onPlayerHit()
+    Rayfield:Notify({
+        Title = "⚠️ Player Hit!",
+        Content = "Kamu kena hukuman!",
+        Duration = 3,
+        Image = 4483362458
+    })
+end
+
+-- Hasil match
+local function onResultUI(result)
+    if result == "Win" or result == true or result == 1 then
+        totalWins = totalWins + 1
+        updateScoreDisplay()
+        Rayfield:Notify({
+            Title = "🏆 Menang!",
+            Content = string.format("GG! Total menang: %d", totalWins),
+            Duration = 4,
+            Image = 4483362458
+        })
+    else
+        totalLosses = totalLosses + 1
+        updateScoreDisplay()
+        Rayfield:Notify({
+            Title = "💀 Kalah!",
+            Content = string.format("Lebih beruntung next round! Total kalah: %d", totalLosses),
+            Duration = 4,
+            Image = 4483362458
+        })
+    end
+
+    -- Auto claim setelah match
+    task.spawn(tryAutoClaim)
+    -- Auto join meja baru
+    task.spawn(tryAutoJoin)
+end
+
+-- Connect semua events
 pcall(function()
     MatchUI.OnClientEvent:Connect(onMatchUI)
     BillboardUpdate.OnClientEvent:Connect(onBillboard)
     UsedWordWarn.OnClientEvent:Connect(onUsedWarn)
+    PlayerCorrect.OnClientEvent:Connect(onPlayerCorrect)
+    PlayerHit.OnClientEvent:Connect(onPlayerHit)
+    ResultUI.OnClientEvent:Connect(onResultUI)
 end)
 
-print("ANTI LUAOBFUSCATOR BUILD V2 LOADED - ANTI DOUBLE WORD ACTIVE")
+print("SAMBUNG KATA V3 - FULL FEATURE LOADED")
