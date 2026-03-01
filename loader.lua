@@ -1,9 +1,8 @@
-local GITHUB_BASE = "https://raw.githubusercontent.com/Bagah-Project/bagah-hub-public/main"
-
+local GITHUB_BASE = "https://raw.githubusercontent.com/dedgbom-dotcom/hi/refs/heads/main"
 
 local SUPPORTED_GAMES = {
     ["Evade"] = {
-        script = "/games/evade/main.lua",
+        url = GITHUB_BASE .. "/game/ev/main.lua",
         placeIds = {
             10324346056,     -- Big Team
             9872472334,      -- Evade
@@ -16,17 +15,21 @@ local SUPPORTED_GAMES = {
         }
     },
     ["Evade Legacy"] = {
-        script = "/games/evadelegacy/main.lua",
+        url = GITHUB_BASE .. "/game/evlegacy/main.lua",
         placeIds = { 96537472072550 }
+    },
+    ["Sambung Kata"] = {
+        url = GITHUB_BASE .. "/game/sambung-kata/main.lua",
+        placeIds = { 130342654546662 }
     },
 }
 
-local UNIVERSAL_SCRIPT = "/universal/main.lua"
+local UNIVERSAL_URL = GITHUB_BASE .. "/universal/main.lua"
 
 
 local function createLoadingUI()
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "BagahLoader"
+    ScreenGui.Name = "rzLoader"
     ScreenGui.DisplayOrder = 999
     ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     ScreenGui.Parent = game:GetService("CoreGui")
@@ -44,7 +47,7 @@ local function createLoadingUI()
     Title.Size = UDim2.new(1, -20, 0, 30)
     Title.Position = UDim2.new(0, 10, 0, 10)
     Title.BackgroundTransparency = 1
-    Title.Text = "BagahHub Loader"
+    Title.Text = "rzprivate Loader"
     Title.TextColor3 = Color3.fromRGB(255, 255, 255)
     Title.TextSize = 18
     Title.Font = Enum.Font.GothamBold
@@ -148,13 +151,13 @@ local function main()
 
     local currentPlaceId = game.PlaceId
     local selectedGame = nil
-    local scriptPath = nil
+    local scriptUrl = nil
 
     for gameName, gameData in pairs(SUPPORTED_GAMES) do
         for _, placeId in ipairs(gameData.placeIds) do
             if currentPlaceId == placeId then
                 selectedGame = gameName
-                scriptPath = gameData.script
+                scriptUrl = gameData.url
                 ui.updateGame("Game: " .. gameName)
                 break
             end
@@ -164,7 +167,7 @@ local function main()
 
     if not selectedGame then
         selectedGame = "Universal"
-        scriptPath = UNIVERSAL_SCRIPT
+        scriptUrl = UNIVERSAL_URL
         ui.updateGame("Game: Universal Script")
     end
 
@@ -172,7 +175,6 @@ local function main()
     ui.updateProgress(0.4)
     task.wait(0.2)
 
-    local scriptUrl = GITHUB_BASE .. scriptPath
     local scriptContent = fetchScript(scriptUrl)
 
     if not scriptContent then
@@ -194,14 +196,6 @@ local function main()
     if success then
         ui.updateStatus("✅ " .. selectedGame .. " loaded!")
         ui.updateProgress(1)
-
-        -- Setup auto-reexecute (DISABLED - causes bugs)
-        --[[
-        local queueTeleport = syn and syn.queue_on_teleport or queue_on_teleport
-        if queueTeleport then
-            queueTeleport("loadstring(game:HttpGet('" .. GITHUB_BASE .. "/mainloader.lua', true))()")
-        end
-        ]]
 
         task.wait(2)
         ui.close()
