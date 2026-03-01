@@ -18,11 +18,16 @@ local Lighting           = game:GetService("Lighting")
 local placeId            = game.PlaceId
 local jobId              = game.JobId
 
+
 -- -------------------------------------------------------------------------- --
 --                            NOTIFICATION FUNCTION                           --
 -- -------------------------------------------------------------------------- --
 
+-- Flag untuk suppress semua notifikasi saat startup
+local isScriptLoading = true
+
 local function Success(title, message, duration)
+    if isScriptLoading then return end  -- ← tambah ini
     local success, err = pcall(function()
         WindUI:Notify({
             Title = title,
@@ -37,6 +42,7 @@ local function Success(title, message, duration)
 end
 
 local function Error(title, message, duration)
+    if isScriptLoading then return end  -- ← tambah ini
     local success, err = pcall(function()
         WindUI:Notify({
             Title = title,
@@ -51,6 +57,7 @@ local function Error(title, message, duration)
 end
 
 local function Info(title, message, duration)
+    if isScriptLoading then return end  -- ← tambah ini
     local success, err = pcall(function()
         WindUI:Notify({
             Title = title,
@@ -65,6 +72,7 @@ local function Info(title, message, duration)
 end
 
 local function Warning(title, message, duration)
+    if isScriptLoading then return end  -- ← tambah ini
     local success, err = pcall(function()
         WindUI:Notify({
             Title = title,
@@ -108,12 +116,18 @@ local AutoSelfReviveModule = (function()
             isReviving = true
 
             if method == "Spawnpoint" then
-                if not hasRevived then
-                    hasRevived = true
-                    pcall(function()
-                        ReplicatedStorage.Events.Player.ChangePlayerMode:FireServer(true)
-                    end)
-                    Success("Auto Self Revive", "Reviving at spawnpoint...", 2)
+    if not hasRevived then
+        hasRevived = true
+        local char = player.Character
+        if char then
+            local hum = char:WaitForChild("Humanoid", 5)
+            if hum then
+                pcall(function()
+                    ReplicatedStorage.Events.Player.ChangePlayerMode:FireServer(true)
+                end)
+                Success("Auto Self Revive", "Reviving at spawnpoint...", 2)
+            end
+        end
 
                     task.delay(10, function()
                         hasRevived = false
@@ -397,10 +411,11 @@ local TeleportModule = (function()
     local TELEPORT_MODULE_URL = "https://raw.githubusercontent.com/dedgbom-dotcom/hi/refs/heads/main/game/ev/modules/TeleportModule.lua"
     
     local moduleData = nil
-    local loadError = nil
-    local lastLoadTime = nil
-    local currentMap = "Unknown"
-    local mapCheckConnection = nil
+local loadError = nil
+local lastLoadTime = nil
+local currentMap = "Unknown"
+local mapCheckConnection = nil
+local isStartup = true  -- ← tambah ini
     
     -- ==================== MAP DETECTION & NOTIFICATION ====================
     
@@ -421,6 +436,8 @@ local TeleportModule = (function()
     
     -- Fungsi untuk handle perubahan map
     local function handleMapChange(newMap)
+    if isStartup then return end  -- ← skip notif saat startup
+    
     if newMap == "Unknown" then
         Warning("Map Detection", "Could not detect current map!", 3)
         return
@@ -430,21 +447,16 @@ local TeleportModule = (function()
         return
     end
     
-    -- Cek apakah map ada di database
     if moduleData and moduleData.HasMapData and moduleData.HasMapData(newMap) then
-        -- Map ADA di database
         local mapCount = moduleData.GetMapCount and moduleData.GetMapCount() or 0
-        
         Success("Map Detected", newMap .. " (" .. mapCount .. " maps available)", 3)
-            
     else
-        -- Map TIDAK ADA di database
         if moduleData then
             Warning("Map Not Found", newMap .. " - Please refresh database", 4)
         end
     end
-end
-    
+ end
+
     -- Fungsi untuk start monitoring map
     local function startMapMonitoring()
         if mapCheckConnection then
@@ -503,6 +515,11 @@ end
     -- Mulai monitoring map
     startMapMonitoring()
     
+-- Matikan startup flag setelah 3 detik
+task.delay(3, function()
+    isStartup = false
+end)
+
     -- Stop monitoring saat player keluar
     game:GetService("Players").PlayerRemoving:Connect(function(leavingPlayer)
         if leavingPlayer == player then
@@ -1063,12 +1080,56 @@ local ServerUtils = (function()
         return true
     end
 
-    return {
-        GetServerLink = getServerLink,
-        JoinServerByPlaceId = joinServerByPlaceId,
-        ServerHop = serverHop,
-        HopToSmallestServer = hopToSmallestServer
-    }
+   local function joinLowestServer(targetPlaceId, modeName)
+    local success, servers = pcall(function()
+        return HttpService:JSONDecode(game:HttpGet("https://games.roblox.com/v1/games/" ..
+            targetPlaceId .. "/servers/Public?sortOrder=Asc&limit=100"))
+    end)
+
+    if not success or not servers or not servers.data then
+        Error("Join Failed", "Could not fetch " .. modeName .. " servers!", 3)
+        return
+    end
+
+    local availableServers = {}
+    for _, server in ipairs(servers.data) do
+        if server.playing < server.maxPlayers then
+            table.insert(availableServers, server)
+        end
+    end
+
+    if #availableServers == 0 then
+        Error("Join Failed", "No available " .. modeName .. " servers found!", 3)
+        return
+    end
+
+    -- Sort dari paling SEDIKIT pemain
+    table.sort(availableServers, function(a, b) return a.playing < b.playing end)
+    local targetServer = availableServers[1]
+
+    WindUI:Notify({
+        Title = "Joining " .. modeName,
+        Content = "Teleporting to server with " ..
+            targetServer.playing .. "/" .. targetServer.maxPlayers .. " players",
+        Duration = 3
+    })
+
+    local teleportSuccess, teleportErr = pcall(function()
+        TeleportService:TeleportToPlaceInstance(targetPlaceId, targetServer.id, player)
+    end)
+
+    if not teleportSuccess then
+        Error("Join Failed", "Teleport error: " .. tostring(teleportErr), 3)
+    end
+end
+
+return {
+    GetServerLink = getServerLink,
+    JoinServerByPlaceId = joinServerByPlaceId,
+    JoinLowestServer = joinLowestServer,
+    ServerHop = serverHop,
+    HopToSmallestServer = hopToSmallestServer
+}
 end)()
 
 -- -------------------------------------------------------------------------- --
@@ -3085,7 +3146,7 @@ function ESP_System:CreatePlayerESP(player)
         self.PlayersESP[player]:Destroy()
     end
     local billboard = Instance.new("BillboardGui")
-    billboard.Name = "DraconicPlayerESP"
+    billboard.Name = "IRUZPlayerESP"
     billboard.Adornee = head
     billboard.Size = UDim2.new(0, 120, 0, 40)
     billboard.StudsOffset = Vector3.new(0, 3.5, 0)
@@ -3178,7 +3239,7 @@ function ESP_System:UpdateTicketsESP()
     for ticket, part in pairs(ticketsFound) do
         if not self.TicketsESP[ticket] then
             local billboard = Instance.new("BillboardGui")
-            billboard.Name = "DraconicTicketESP"
+            billboard.Name = "IRUZTicketESP"
             billboard.Adornee = part
             billboard.Size = UDim2.new(0, 100, 0, 30)
             billboard.StudsOffset = Vector3.new(0, 2, 0)
@@ -3215,7 +3276,7 @@ end
 function ESP_System:CreateFakePartForModel(model)
     if not model or not model:IsA("Model") then return nil end
     local fakePart = Instance.new("Part")
-    fakePart.Name = "DraconicESP_Anchor"
+    fakePart.Name = "IRUZESP_Anchor"
     fakePart.Size = Vector3.new(0.1, 0.1, 0.1)
     fakePart.Transparency = 1
     fakePart.CanCollide = false
@@ -3238,7 +3299,7 @@ end
 function ESP_System:CreateNextbotESP(model, part)
     if not part then return nil end
     local billboard = Instance.new("BillboardGui")
-    billboard.Name = "DraconicNextbotESP"
+    billboard.Name = "IRUZNextbotESP"
     billboard.Parent = part
     billboard.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     billboard.AlwaysOnTop = true
@@ -3260,7 +3321,7 @@ end
 
 function ESP_System:UpdateNextbotESP(model, part)
     if not part then return false end
-    local esp = part:FindFirstChild("DraconicNextbotESP")
+    local esp = part:FindFirstChild("IRUZNextbotESP")
     if esp and esp:FindFirstChildOfClass("TextLabel") then
         local label = esp:FindFirstChildOfClass("TextLabel")
         local distance = self:GetDistanceFromPlayer(part.Position)
@@ -3287,7 +3348,7 @@ function ESP_System:ScanNextbots()
     end
     for model in pairs(nextbots) do
         if not self.NextbotsESP[model] then
-            local fakePart = model:FindFirstChild("DraconicESP_Anchor") or self:CreateFakePartForModel(model)
+            local fakePart = model:FindFirstChild("IRUZESP_Anchor") or self:CreateFakePartForModel(model)
             if fakePart then
                 local esp = self:CreateNextbotESP(model, fakePart)
                 if esp then
@@ -3324,7 +3385,7 @@ function ESP_System:ScanNextbots()
         if not nextbots[model] or not model.Parent then
             pcall(function()
                 if data.esp then data.esp:Destroy() end
-                if data.part and data.part.Name == "DraconicESP_Anchor" then data.part:Destroy() end
+                if data.part and data.part.Name == "IRUZESP_Anchor" then data.part:Destroy() end
             end)
             self.NextbotsESP[model] = nil
         end
@@ -3335,7 +3396,7 @@ function ESP_System:ClearNextbotsESP()
     for _, data in pairs(self.NextbotsESP) do
         pcall(function()
             if data.esp then data.esp:Destroy() end
-            if data.part and data.part.Name == "DraconicESP_Anchor" then data.part:Destroy() end
+            if data.part and data.part.Name == "IRUZESP_Anchor" then data.part:Destroy() end
         end)
     end
     self.NextbotsESP = {}
@@ -3352,7 +3413,7 @@ function ESP_System:CreatePlayerChams(player)
     end
 
     local highlight = Instance.new("Highlight")
-    highlight.Name = "DraconicPlayerChams"
+    highlight.Name = "IRUZPlayerChams"
     highlight.FillColor = self.Settings.ChamsPlayers.FillColor
     highlight.OutlineColor = self.Settings.ChamsPlayers.OutlineColor
     highlight.FillTransparency = self.Settings.ChamsPlayers.FillTransparency
@@ -3689,7 +3750,7 @@ local WindowConfigTab = Tabs.Customise:Tab({ Title = "Window Config", Icon = "se
 CredTab:Paragraph({
     Title = "Credits",
     Desc = "Original rzprivate \nGUI Library: WindUI\nVisual by: iruz",
-    Thumbnail = "https://wallpapers.com/images/high/widescreen-darling-in-the-franxx-02-uzmizm4y7lhahvy1.webp",
+    Thumbnail = "https://wallpapers.com/images/high/anime-school-girl-cute-short-hair-voydje3wlb8co29h.webp",
     ThumbnailSize = 150
 })
 
@@ -3703,7 +3764,7 @@ CredTab:Paragraph({
             Icon = "copy",
             Callback = function()
                 local success, err = pcall(function()
-                    setclipboard("https://discord.gg/QUaWcAK8bx")
+                    setclipboard("https://discord.gg/uCZXZkME")
                 end)
                 if success then
                     WindUI:Notify({
@@ -5376,6 +5437,15 @@ ServerTab:Button({
     end
 })
 
+ServerTab:Button({
+    Title = "Join Pro (Low Players)",
+    Desc = "Join the emptiest Pro server",
+    Icon = "award",
+    Callback = function()
+        ServerUtils.JoinLowestServer(11353528705, "Pro Low")
+    end
+})
+
 ServerTab:Divider()
 
 local customServerCode = ""
@@ -5466,7 +5536,7 @@ themeDropdown:Select(WindUI:GetCurrentTheme())
 
 local BackgroundInput = WindowConfigTab:Input({
     Title = "Background Image/Video",
-    Value = "85878831310179",
+    Value = "100329398093158",
     Placeholder = "Asset ID or Video Link",
     Callback = function(input)
         if input:match("^%d+$") then
@@ -5482,7 +5552,10 @@ WindowConfigTab:Dropdown({
     Values = {
         "79199183782805",
         "85878831310179",
-        "easter egg ig >:3"
+        "130577691091307",
+        "100329398093158",
+        "116383183080193",
+
     },
     Default = "easter egg ig >:3",
     Callback = function(option)
@@ -5606,6 +5679,9 @@ end)
 -- ========================================================================== --
 
 player.CharacterAdded:Connect(function(character)
+    local humanoid = character:WaitForChild("Humanoid", 10)
+    if not humanoid then return end
+    task.wait(0.5)
     NoclipModule.OnCharacterAdded()
     BugEmoteModule.OnCharacterAdded()
     RemoveBarriersModule.OnCharacterAdded()
@@ -5618,5 +5694,8 @@ end)
 -- ========================================================================== --
 
 Window:SelectTab(1)
-Success("rzprivate", "Evade script loaded successfully with " .. 
-       "Auto | Teleport | Visual | Movement | Misc | Server", 3)
+task.delay(1, function()
+    isScriptLoading = false
+    Success("rzprivate", "Evade script loaded successfully with " .. 
+           "Auto | Teleport | Visual | Movement | Misc | Server", 3)
+end)
