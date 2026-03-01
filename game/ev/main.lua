@@ -1,4 +1,11 @@
 -- ========================================================================== --
+--                              LOAD WINDUI                                    --
+-- ========================================================================== --
+
+local WindUI = getgenv().WindUI
+WindUI:SetTheme("Violet")
+
+-- ========================================================================== --
 --                            SERVICES & MODULES                               --
 -- ========================================================================== --
 
@@ -3678,12 +3685,6 @@ function ESP_System:Stop()
     self:ClearTracerAll() 
 end
 
--- ========================================================================== --
---                              LOAD WINDUI                                    --
--- ========================================================================== --
-
-local WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
-WindUI:SetTheme("Violet")
 
 -- ========================================================================== --
 --                              CREATE WINDOW                                  --
@@ -3750,7 +3751,7 @@ local WindowConfigTab = Tabs.Customise:Tab({ Title = "Window Config", Icon = "se
 CredTab:Paragraph({
     Title = "Credits",
     Desc = "Original rzprivate \nGUI Library: WindUI\nVisual by: iruz",
-    Thumbnail = "https://wallpapers.com/images/high/anime-school-girl-cute-short-hair-voydje3wlb8co29h.webp",
+    Thumbnail = "https://wallpapers.com/images/high/animated-girl-arrow-c3cmqx47mo7472j1.webp",
     ThumbnailSize = 150
 })
 
