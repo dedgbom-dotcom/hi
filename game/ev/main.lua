@@ -5108,6 +5108,89 @@ MovementTab:Paragraph({
     ThumbnailSize = 0
 })
 
+-- -------------------------------------------------------------------------- --
+--                         STUN BATON MODULE (NO AUTO-AIM)                    --
+-- -------------------------------------------------------------------------- --
+
+local StunBatonModule = (function()
+    local function enhanceStunBaton()
+        local success, result = pcall(function()
+            local StunBaton = require(ReplicatedStorage.Tools["StunBaton"])
+            
+            local task = StunBaton.Tasks[1]
+            
+            -- Spam mode (hold to attack)
+            task.Functions[1].Activations[1].CanHoldDown = true
+            task.Functions[1].Activations[2].CanHoldDown = true
+            
+            -- ❌ HILANGKAN LUNGE (TIDAK TERBANG)
+            task.Functions[1].Activations[1].Methods[1].Info.LungeRange = 0
+            task.Functions[1].Activations[2].Methods[1].Info.LungeRange = 0
+            
+            -- ✅ INFINITE RANGE TAPI TANPA AUTO-AIM
+            task.AutomaticFunctions[1].Methods[1].Info.Range = 999 -- Range normal 30 studs
+            task.AutomaticFunctions[2].Methods[1].Info.Range = 999
+            
+            -- ❌ HILANGKAN REQUIREMENT MELEE SUCCESS (STOP AUTO-AIM)
+            if task.Functions[1].Activations[2].Methods[1].Requirements then
+                if task.Functions[1].Activations[2].Methods[1].Requirements.MeleeSuccess then
+                    task.Functions[1].Activations[2].Methods[1].Requirements.MeleeSuccess = nil
+                end
+            end
+            
+            -- Cooldown 0.2s
+            task.AutomaticFunctions[1].Methods[1].Info.Cooldown = 0.1
+            task.AutomaticFunctions[2].Methods[1].Info.Cooldown = 0.1
+            task.Functions[1].Activations[1].Methods[1].Info.Cooldown = 0.1
+            task.Functions[1].Activations[2].Methods[1].Info.Cooldown = 0.1
+            
+            -- Remove restrictions
+            task.Functions[1].Activations[1].Methods[1].Requirements = {}
+            task.Functions[1].Activations[2].Methods[1].Requirements = {}
+            task.Functions[1].Activations[1].Methods[1].CooldownInfo = {}
+            task.Functions[1].Activations[2].Methods[1].CooldownInfo = {}
+            
+            -- No self damage
+            task.AutomaticFunctions[1].Methods[1].Info.SelfDamage = 0
+            
+            -- Super stun 15s
+            task.AutomaticFunctions[2].Methods[1].Info.SuccessStunLength = 15
+            task.Functions[1].Activations[1].Methods[1].Info.SuccessStunLength = 15
+            task.Functions[1].Activations[2].Methods[1].Info.SuccessStunLength = 15
+            
+            -- Long immortality 10s
+            task.AutomaticFunctions[2].Methods[1].Info.SuccessImmortalLength = 10
+            task.Functions[1].Activations[1].Methods[1].Info.SuccessImmortalLength = 10
+            task.Functions[1].Activations[2].Methods[1].Info.SuccessImmortalLength = 10
+            task.Functions[1].Activations[1].Methods[1].Info.ImmortalLength = 10
+            task.Functions[1].Activations[2].Methods[1].Info.ImmortalLength = 10
+            
+            -- Increased damage
+            task.AutomaticFunctions[2].Methods[1].Info.Damage = 110
+            
+            -- Disable ADS
+            StunBaton.Actions.ADS.Enabled = false
+            
+            return true
+        end)
+        
+        if success then
+            Success("Stun Baton", "No Auto-Aim mode! Hold click to spam (30 studs range)", 2)
+            return true
+        else
+            Error("Stun Baton", "Failed to enhance: " .. tostring(result), 3)
+            warn("Stun Baton error details:", result)
+            return false
+        end
+    end
+    
+    return {
+        Execute = function()
+            return enhanceStunBaton()
+        end
+    }
+end)()
+
 -- ========================================================================== --
 --                              MISC TAB (RINGAN)                              --
 -- ========================================================================== --
@@ -5139,6 +5222,15 @@ MiscTab:Button({
     Desc = "Enhance Smoke Grenade (bigger cloud, faster)",
     Callback = function()
         SmokeGrenadeModule.Execute()
+    end
+})
+
+-- Stun Baton Button
+MiscTab:Button({
+    Title = "Stun Baton",
+    Desc = "Enhance Stun Baton (infinite range, no cooldown, super stun)",
+    Callback = function()
+        StunBatonModule.Execute()
     end
 })
 
