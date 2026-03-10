@@ -17,7 +17,7 @@ local StarterGui         = game:GetService("StarterGui")
 local Lighting           = game:GetService("Lighting")
 local placeId            = game.PlaceId
 local jobId              = game.JobId
-
+local WindUI
 
 -- -------------------------------------------------------------------------- --
 --                            NOTIFICATION FUNCTION                           --
@@ -3682,7 +3682,7 @@ end
 --                              LOAD WINDUI                                    --
 -- ========================================================================== --
 
-local WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
+WindUI = loadstring(game:HttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
 WindUI:SetTheme("Violet")
 
 -- ========================================================================== --
@@ -3696,6 +3696,7 @@ local Window = WindUI:CreateWindow({
     Size = UDim2.fromOffset(650, 500),
     Background = "rbxassetid://85878831310179",
     Folder = "rzprivate",
+    CanClose = false,
 })
 
 -- ========================================================================== --
@@ -3757,27 +3758,15 @@ CredTab:Paragraph({
 CredTab:Paragraph({
     Title = "Join our discord server!",
     Desc = "Why waiting? join now!",
-    Buttons = {
-        {
-            Title = "Copy Discord Link",
-            Variant = "Primary",
-            Icon = "copy",
-            Callback = function()
-                local success, err = pcall(function()
-                    setclipboard("https://discord.gg/uCZXZkME")
-                end)
-                if success then
-                    WindUI:Notify({
-                        Title = "Copied!",
-                        Content = "Discord link copied to clipboard.",
-                        Duration = 2
-                    })
-                else
-                    warn("Failed to copy link:", err)
-                end
-            end
-        }
-    }
+})
+
+CredTab:Button({
+    Title = "Copy Discord Link",
+    Icon = "copy",
+    Callback = function()
+        pcall(function() setclipboard("https://discord.gg/uCZXZkME") end)
+        WindUI:Notify({ Title = "Copied!", Content = "Discord link copied.", Duration = 2 })
+    end
 })
 
 -- ========================================================================== --
