@@ -1,217 +1,163 @@
-local GITHUB_BASE = "https://raw.githubusercontent.com/dedgbom-dotcom/hi/refs/heads/main"
+-- ========================================================================== --
+--                      RZPRIVATE - EVADE LOADER                              --
+--                            by iruz | version 3.0                           --
+-- ========================================================================== --
 
-local SUPPORTED_GAMES = {
-    ["Evade"] = {
-        url = GITHUB_BASE .. "/game/ev/main.lua",
-        placeIds = {
-            10324346056,     -- Big Team
-            9872472334,      -- Evade
-            10662542523,     -- Casual
-            10324347967,     -- Social Space
-            121271605799901, -- Player Nextbots
-            10808838353,     -- VC Only
-            11353528705,     -- Pro
-            99214917572799,  -- Custom Servers
-        }
-    },
-    ["Evade Legacy"] = {
-        url = GITHUB_BASE .. "/game/evlegacy/main.lua",
-        placeIds = { 96537472072550 }
-    },
-    ["Sambung Kata"] = {
-        url = GITHUB_BASE .. "/game/sambung-kata/main.lua",
-        placeIds = { 130342654546662 }
-    },
+-- ========================================================================== --
+--                            LOAD OBSIDIAN LIBRARY                           --
+-- ========================================================================== --
+
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+
+-- ========================================================================== --
+--                            CONFIGURATION                                    --
+-- ========================================================================== --
+
+local CORRECT_KEY = "iruzruz"
+local MAIN_SCRIPT_URL = "https://raw.githubusercontent.com/dedgbom-dotcom/hi/main/game/ev/main.lua"
+
+-- ========================================================================== --
+--                            CREATE LOADER WINDOW                            --
+-- ========================================================================== --
+
+local Window = Library:CreateWindow({
+    Title = "rzprivate - Evade (Key System)",
+    Footer = "by iruz | version 3.0",
+    Icon = 95816097006870,
+    NotifySide = "Right",
+    ShowCustomCursor = true,
+})
+
+local Tabs = {
+    Key = Window:AddTab("Key System", "key"),
 }
 
-local UNIVERSAL_URL = GITHUB_BASE .. "/universal/main.lua"
+-- ========================================================================== --
+--                            KEY SYSTEM TAB                                   --
+-- ========================================================================== --
 
+Tabs.Key:AddLabel({
+    Text = "Welcome to rzprivate - Evade!",
+    DoesWrap = true,
+    Size = 18,
+})
 
-local function createLoadingUI()
-    local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "rzLoader"
-    ScreenGui.DisplayOrder = 999
-    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    ScreenGui.Parent = game:GetService("CoreGui")
-    local Frame = Instance.new("Frame")
-    Frame.Size = UDim2.new(0, 320, 0, 140)
-    Frame.Position = UDim2.new(0.5, -160, 0.5, -70)
-    Frame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-    Frame.BorderSizePixel = 0
+Tabs.Key:AddDivider()
 
-    local Corner = Instance.new("UICorner")
-    Corner.CornerRadius = UDim.new(0, 8)
-    Corner.Parent = Frame
+Tabs.Key:AddLabel({
+    Text = "Enter the key to access the script.\nKey: iruzruz",
+    DoesWrap = true,
+    Size = 14,
+})
 
-    local Title = Instance.new("TextLabel")
-    Title.Size = UDim2.new(1, -20, 0, 30)
-    Title.Position = UDim2.new(0, 10, 0, 10)
-    Title.BackgroundTransparency = 1
-    Title.Text = "rzprivate Loader"
-    Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-    Title.TextSize = 18
-    Title.Font = Enum.Font.GothamBold
-    Title.TextXAlignment = Enum.TextXAlignment.Left
-    Title.Parent = Frame
+Tabs.Key:AddDivider()
 
-    local Status = Instance.new("TextLabel")
-    Status.Size = UDim2.new(1, -20, 0, 20)
-    Status.Position = UDim2.new(0, 10, 0, 50)
-    Status.BackgroundTransparency = 1
-    Status.Text = "Initializing..."
-    Status.TextColor3 = Color3.fromRGB(200, 200, 200)
-    Status.TextSize = 14
-    Status.Font = Enum.Font.Gotham
-    Status.TextXAlignment = Enum.TextXAlignment.Left
-    Status.Parent = Frame
+local keyStatusLabel = Tabs.Key:AddLabel({
+    Text = "Status: Waiting for key...",
+    DoesWrap = true,
+    Size = 14,
+})
 
-    local GameName = Instance.new("TextLabel")
-    GameName.Size = UDim2.new(1, -20, 0, 16)
-    GameName.Position = UDim2.new(0, 10, 0, 75)
-    GameName.BackgroundTransparency = 1
-    GameName.Text = "Detecting game..."
-    GameName.TextColor3 = Color3.fromRGB(150, 150, 150)
-    GameName.TextSize = 12
-    GameName.Font = Enum.Font.Gotham
-    GameName.TextXAlignment = Enum.TextXAlignment.Left
-    GameName.Parent = Frame
-
-    local ProgressBG = Instance.new("Frame")
-    ProgressBG.Size = UDim2.new(1, -20, 0, 4)
-    ProgressBG.Position = UDim2.new(0, 10, 0, 110)
-    ProgressBG.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
-    ProgressBG.BorderSizePixel = 0
-
-    local ProgressCorner = Instance.new("UICorner")
-    ProgressCorner.CornerRadius = UDim.new(0, 2)
-    ProgressCorner.Parent = ProgressBG
-
-    local Progress = Instance.new("Frame")
-    Progress.Size = UDim2.new(0, 0, 1, 0)
-    Progress.BackgroundColor3 = Color3.fromRGB(138, 43, 226)
-    Progress.BorderSizePixel = 0
-
-    local FillCorner = Instance.new("UICorner")
-    FillCorner.CornerRadius = UDim.new(0, 2)
-    FillCorner.Parent = Progress
-
-    Progress.Parent = ProgressBG
-    ProgressBG.Parent = Frame
-    Frame.Parent = ScreenGui
-
-    local function updateStatus(text)
-        Status.Text = text
-    end
-
-    local function updateGame(text)
-        GameName.Text = text
-    end
-
-    local function updateProgress(percent)
-        Progress:TweenSize(
-            UDim2.new(percent, 0, 1, 0),
-            Enum.EasingDirection.Out,
-            Enum.EasingStyle.Quad,
-            0.3,
-            true
-        )
-    end
-
-    local function close()
-        ScreenGui:Destroy()
-    end
-
-    return {
-        updateStatus = updateStatus,
-        updateGame = updateGame,
-        updateProgress = updateProgress,
-        close = close
-    }
-end
-
-local function fetchScript(url)
-    local cacheBuster = string.format("?v=%d&r=%d&t=%d",
-        tick() * 1000,
-        math.random(100000, 999999),
-        os.time()
-    )
-
-    local success, result = pcall(function()
-        return game:HttpGet(url .. cacheBuster, true)
-    end)
-    return success and result or nil
-end
-
-
-local function main()
-    local ui = createLoadingUI()
-    ui.updateStatus("Detecting game...")
-    ui.updateProgress(0.2)
-    task.wait(0.3)
-
-    local currentPlaceId = game.PlaceId
-    local selectedGame = nil
-    local scriptUrl = nil
-
-    for gameName, gameData in pairs(SUPPORTED_GAMES) do
-        for _, placeId in ipairs(gameData.placeIds) do
-            if currentPlaceId == placeId then
-                selectedGame = gameName
-                scriptUrl = gameData.url
-                ui.updateGame("Game: " .. gameName)
-                break
+Tabs.Key:AddKeyBox(function(ReceivedKey)
+    local Success = ReceivedKey == CORRECT_KEY
+    
+    if Success then
+        -- Update status
+        if keyStatusLabel and keyStatusLabel.SetText then
+            pcall(function() 
+                keyStatusLabel:SetText("✅ Key Accepted! Loading script...")
+            end)
+        end
+        
+        Library:Notify({
+            Title = "✅ Key Accepted",
+            Description = "Loading main script...",
+            Time = 3,
+        })
+        
+        -- Wait a moment for notification
+        task.wait(1)
+        
+        -- Load main script
+        local success, err = pcall(function()
+            loadstring(game:HttpGet(MAIN_SCRIPT_URL))()
+        end)
+        
+        if success then
+            Library:Notify({
+                Title = "✅ Script Loaded",
+                Description = "rzprivate - Evade is now running!",
+                Time = 3,
+            })
+            
+            -- Wait for notification then unload loader
+            task.wait(2)
+            Library:Unload()
+        else
+            Library:Notify({
+                Title = "❌ Load Failed",
+                Description = "Error: " .. tostring(err),
+                Time = 5,
+            })
+            
+            if keyStatusLabel and keyStatusLabel.SetText then
+                pcall(function() 
+                    keyStatusLabel:SetText("❌ Failed to load script! Check console for errors.")
+                end)
             end
         end
-        if selectedGame then break end
-    end
-
-    if not selectedGame then
-        selectedGame = "Universal"
-        scriptUrl = UNIVERSAL_URL
-        ui.updateGame("Game: Universal Script")
-    end
-
-    ui.updateStatus("Fetching script...")
-    ui.updateProgress(0.4)
-    task.wait(0.2)
-
-    local scriptContent = fetchScript(scriptUrl)
-
-    if not scriptContent then
-        ui.updateStatus("❌ Failed to fetch script")
-        ui.updateGame("Check your connection")
-        task.wait(3)
-        ui.close()
-        return
-    end
-
-    ui.updateStatus("Loading " .. selectedGame .. "...")
-    ui.updateProgress(0.7)
-    task.wait(0.2)
-
-    local success, err = pcall(function()
-        loadstring(scriptContent)()
-    end)
-
-    if success then
-        ui.updateStatus("✅ " .. selectedGame .. " loaded!")
-        ui.updateProgress(1)
-
-        task.wait(2)
-        ui.close()
-
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = "rzprivate",
-            Text = selectedGame .. " loaded successfully!",
-            Duration = 3
-        })
     else
-        ui.updateStatus("❌ Failed to load")
-        ui.updateGame("Error: " .. tostring(err))
-        task.wait(5)
-        ui.close()
+        Library:Notify({
+            Title = "❌ Wrong Key",
+            Description = "Received: " .. ReceivedKey .. "\nExpected: " .. CORRECT_KEY,
+            Time = 4,
+        })
+        
+        if keyStatusLabel and keyStatusLabel.SetText then
+            pcall(function() 
+                keyStatusLabel:SetText("❌ Wrong key! Try again.")
+            end)
+        end
     end
-end
+end)
 
+Tabs.Key:AddDivider()
 
-main()
+Tabs.Key:AddLabel({
+    Text = "Features:\n• Combat (Auto Revive, Fast Revive, Weapon Enhancements)\n• Teleport (Map Spots, Players, Objectives)\n• ESP (Players, Tickets, Nextbots, Chams, Tracers)\n• Movement (Noclip, Fly, Infinite Slide, Bhop)\n• Visual (Barriers, Lighting, Camera, Anti-Lag)\n• Server (Server Hop, Join Modes, Lag Switch)",
+    DoesWrap = true,
+    Size = 12,
+})
+
+-- ========================================================================== --
+--                            THEME MANAGER                                    --
+-- ========================================================================== --
+
+ThemeManager:SetLibrary(Library)
+ThemeManager:SetFolder("rzprivate")
+ThemeManager:ApplyToTab(Tabs.Key)
+
+-- ========================================================================== --
+--                            MENU KEYBIND                                     --
+-- ========================================================================== --
+
+local MenuGroup = Tabs.Key:AddRightGroupbox("Menu Settings", "settings")
+
+MenuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", { 
+    Default = "RightShift", 
+    NoUI = true, 
+    Text = "Menu keybind" 
+})
+
+Library.ToggleKeybind = Library.Options.MenuKeybind
+
+-- ========================================================================== --
+--                            FINAL                                            --
+-- ========================================================================== --
+
+print("=".rep(70))
+print("rzprivate - Evade Loader v3.0")
+print("by iruz | Key: iruzruz")
+print("=".rep(70))
