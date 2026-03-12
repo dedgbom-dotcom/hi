@@ -225,169 +225,827 @@ local AutoSelfReviveModule = (function()
 end)()
 
 -- ========================================================================== --
---                         FAST REVIVE MODULE                                 --
+--                         INSTANT REVIVE MODULE                              --
 -- ========================================================================== --
 
-local FastReviveModule = (function()
+local InstantReviveModule = (function()
     local enabled = false
-    local method = "Interact"
+    local reviveWhileEmoting = false
+    local reviveDelay = 0.15
     local reviveRange = 10
-    local loopDelay = 0.15
-    local reviveLoopHandle = nil
-    local interactHookConnection = nil
-    local keyboardConnection = nil
-    local interactEvent = ReplicatedStorage:WaitForChild("Events"):WaitForChild("Character"):WaitForChild("Interact")
-
-    local function isPlayerDowned(plr)
-        local success, result = pcall(function()
-            local char = plr.Character
-            if char and char:FindFirstChild("Humanoid") then
-                local humanoid = char.Humanoid
-                return humanoid.Health <= 0 or char:GetAttribute("Downed") == true
-            end
-            return false
-        end)
-        return success and result or false
+    
+    local handle = nil
+    local stateConnection = nil
+    local isCurrentlyEmoting = false
+    
+    local interactEvent = ReplicatedStorage:WaitForChild("Events")
+        :WaitForChild("Character"):WaitForChild("Interact")
+    
+    -- Check if player is emoting
+    local function updateEmoteStatus()
+        if not player.Character then
+            isCurrentlyEmoting = false
+            return
+        end
+        local state = player.Character:GetAttribute("State")
+        isCurrentlyEmoting = state and string.find(state, "Emoting")
     end
-
-    local function startAutoMethod()
-        if reviveLoopHandle then return end
-
-        reviveLoopHandle = task.spawn(function()
-            while enabled and method == "Auto" do
-                local success, myChar = pcall(function()
-                    return player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-                end)
+    
+    -- Check if player is downed
+    local function isPlayerDowned(pl)
+        if not pl or not pl.Character then return false end
+        local char = pl.Character
+        
+        -- Check Downed attribute
+        if char:GetAttribute("Downed") then return true end
+        
+        -- Check humanoid health
+        local hum = char:FindFirstChild("Humanoid")
+        if hum and hum.Health <= 0 then return true end
+        
+        return false
+    end
+    
+    -- Main revive loop
+    local function reviveLoop()
+        while enabled do
+            -- Skip if emoting and reviveWhileEmoting is disabled
+            if isCurrentlyEmoting and not reviveWhileEmoting then
+                task.wait(0.3)
+                continue
+            end
+            
+            local myChar = player.Character
+            if myChar and myChar:FindFirstChild("HumanoidRootPart") then
+                local myHRP = myChar.HumanoidRootPart
                 
-                if success and myChar then
-                    local myHRP = player.Character.HumanoidRootPart
-                    for _, plr in ipairs(Players:GetPlayers()) do
-                        if plr ~= player then
-                            local char = plr.Character
-                            if char and char:FindFirstChild("HumanoidRootPart") then
-                                if isPlayerDowned(plr) then
-                                    local hrp = char.HumanoidRootPart
-                                    local distSuccess, dist = pcall(function()
-                                        return (myHRP.Position - hrp.Position).Magnitude
-                                    end)
-                                    if distSuccess and dist and dist <= reviveRange then
-                                        pcall(function()
-                                            interactEvent:FireServer("Revive", true, plr.Name)
-                                        end)
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-                task.wait(loopDelay)
-            end
-            reviveLoopHandle = nil
-        end)
-    end
-
-    local function stopAutoMethod()
-        if reviveLoopHandle then
-            pcall(function() task.cancel(reviveLoopHandle) end)
-            reviveLoopHandle = nil
-        end
-    end
-
-    local function startInteractMethod()
-        if interactHookConnection then return end
-
-        local success, eventsFolder = pcall(function()
-            return player.PlayerScripts:WaitForChild("Events")
-        end)
-        
-        if not success or not eventsFolder then return end
-        
-        local tempEventsFolder = eventsFolder:WaitForChild("temporary_events")
-        local useKeybind = tempEventsFolder:WaitForChild("UseKeybind")
-
-        interactHookConnection = useKeybind.Event:Connect(function(...)
-            local args = { ... }
-
-            if args[1] and type(args[1]) == "table" then
-                local keyData = args[1]
-
-                if keyData.Key == "Interact" and keyData.Down == true and enabled then
-                    task.spawn(function()
-                        for _, plr in pairs(Players:GetPlayers()) do
-                            if plr ~= player then
+                -- Loop through all players
+                for _, pl in ipairs(Players:GetPlayers()) do
+                    if pl ~= player and pl.Character and pl.Character:FindFirstChild("HumanoidRootPart") then
+                        if isPlayerDowned(pl) then
+                            local dist = (myHRP.Position - pl.Character.HumanoidRootPart.Position).Magnitude
+                            
+                            -- Revive if in range
+                            if dist <= reviveRange then
                                 pcall(function()
-                                    interactEvent:FireServer("Revive", true, plr.Name)
+                                    interactEvent:FireServer("Revive", true, pl.Name)
                                 end)
-                                task.wait(0.1)
                             end
                         end
-                    end)
+                    end
                 end
             end
-        end)
-
-        keyboardConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
-            if gameProcessed or not enabled then return end
-
-            if input.KeyCode == Enum.KeyCode.E then
-                task.spawn(function()
-                    for _, plr in pairs(Players:GetPlayers()) do
-                        if plr ~= player then
-                            pcall(function()
-                                interactEvent:FireServer("Revive", true, plr.Name)
-                            end)
-                            task.wait(0.1)
-                        end
-                    end
-                end)
-            end
-        end)
-    end
-
-    local function stopInteractMethod()
-        if interactHookConnection then
-            pcall(function() interactHookConnection:Disconnect() end)
-            interactHookConnection = nil
-        end
-        if keyboardConnection then
-            pcall(function() keyboardConnection:Disconnect() end)
-            keyboardConnection = nil
+            
+            task.wait(reviveDelay)
         end
     end
-
+    
+    -- Start instant revive
     local function start()
+        if handle then return end
         enabled = true
-        if method == "Auto" then
-            stopInteractMethod()
-            startAutoMethod()
-        elseif method == "Interact" then
-            stopAutoMethod()
-            startInteractMethod()
+        
+        updateEmoteStatus()
+        
+        -- Setup emote detection
+        if player.Character then
+            stateConnection = player.Character:GetAttributeChangedSignal("State"):Connect(updateEmoteStatus)
         end
+        
+        -- Handle character respawn
+        player.CharacterAdded:Connect(function(char)
+            if stateConnection then stateConnection:Disconnect() end
+            stateConnection = char:GetAttributeChangedSignal("State"):Connect(updateEmoteStatus)
+            updateEmoteStatus()
+        end)
+        
+        -- Start revive loop
+        handle = task.spawn(reviveLoop)
+        
+        Success("Instant Revive", "Activated (Delay: " .. reviveDelay .. "s)", 2)
     end
-
+    
+    -- Stop instant revive
     local function stop()
         enabled = false
-        stopAutoMethod()
-        stopInteractMethod()
-    end
-
-    local function setMethod(newMethod)
-        local wasEnabled = enabled
-        stop()
-        method = newMethod
-        if wasEnabled then
-            start()
+        
+        if handle then
+            task.cancel(handle)
+            handle = nil
         end
+        
+        if stateConnection then
+            stateConnection:Disconnect()
+            stateConnection = nil
+        end
+        
+        isCurrentlyEmoting = false
+        
+        Info("Instant Revive", "Disabled", 2)
     end
-
+    
     return {
         Start = start,
         Stop = stop,
-        SetMethod = setMethod,
-        IsEnabled = function()
-            return enabled
+        IsEnabled = function() return enabled end,
+        SetDelay = function(delay)
+            reviveDelay = delay
+            Success("Instant Revive", "Delay set to " .. delay .. "s", 1)
+        end,
+        SetReviveWhileEmoting = function(state)
+            reviveWhileEmoting = state
+        end,
+        SetRange = function(range)
+            reviveRange = range
+            Success("Instant Revive", "Range set to " .. range .. " studs", 1)
         end
+    }
+end)()
+
+-- ========================================================================== --
+--                         AUTO WHISTLE MODULE                                --
+-- ========================================================================== --
+
+local AutoWhistleModule = (function()
+    local enabled = false
+    local whistleHandle = nil
+    local whistleDelay = 1 -- detik
+    
+    local function startWhistle()
+        if whistleHandle then return end
+        
+        whistleHandle = task.spawn(function()
+            while enabled do
+                pcall(function()
+                    ReplicatedStorage.Events.Character.Whistle:FireServer()
+                end)
+                task.wait(whistleDelay)
+            end
+            whistleHandle = nil
+        end)
+    end
+    
+    local function stopWhistle()
+        enabled = false
+        if whistleHandle then
+            task.cancel(whistleHandle)
+            whistleHandle = nil
+        end
+    end
+    
+    local function start()
+        if enabled then return end
+        enabled = true
+        startWhistle()
+        Success("Auto Whistle", "Activated", 2)
+    end
+    
+    local function stop()
+        if not enabled then return end
+        enabled = false
+        stopWhistle()
+        Info("Auto Whistle", "Disabled", 2)
+    end
+    
+    return {
+        Start = start,
+        Stop = stop,
+        IsEnabled = function() return enabled end,
+        SetDelay = function(delay) 
+            whistleDelay = delay 
+            Success("Auto Whistle", "Delay set to " .. delay .. "s", 1)
+        end
+    }
+end)()
+
+-- ========================================================================== --
+--                         AUTO FARM MONEY MODULE                             --
+-- ========================================================================== --
+
+local AutoFarmMoneyModule = (function()
+    local enabled = false
+    local farmConnection = nil
+    local reviveRange = 15
+    local loopDelay = 0.25
+    
+    local interactEvent = ReplicatedStorage:WaitForChild("Events")
+        :WaitForChild("Character"):WaitForChild("Interact")
+    
+    -- Check if player is downed
+    local function isPlayerDowned(pl)
+        if not pl or not pl.Character then return false end
+        local char = pl.Character
+        
+        -- Check Downed attribute
+        if char:GetAttribute("Downed") == true then
+            return true
+        end
+        
+        -- Check in Ragdolls folder
+        local ragdollsFolder = workspace:FindFirstChild("Game") 
+            and workspace.Game:FindFirstChild("Ragdolls")
+        if ragdollsFolder and ragdollsFolder:FindFirstChild(pl.Name) then
+            return true
+        end
+        
+        return false
+    end
+    
+    -- Get downed player's position (even if ragdoll)
+    local function getDownedRootPart(pl)
+        -- Try normal character first
+        if pl.Character and pl.Character:FindFirstChild("HumanoidRootPart") then
+            return pl.Character.HumanoidRootPart
+        end
+        
+        -- Try ragdoll folder
+        local ragdollsFolder = workspace:FindFirstChild("Game") 
+            and workspace.Game:FindFirstChild("Ragdolls")
+        if ragdollsFolder then
+            local ragdoll = ragdollsFolder:FindFirstChild(pl.Name)
+            if ragdoll then
+                return ragdoll:FindFirstChild("HumanoidRootPart") 
+                    or ragdoll:FindFirstChild("Torso") 
+                    or ragdoll:FindFirstChild("Head") 
+                    or ragdoll:FindFirstChildWhichIsA("BasePart")
+            end
+        end
+        return nil
+    end
+    
+    -- Main farm loop
+    local function farmLoop()
+        while enabled do
+            local character = player.Character
+            local securityPart = workspace:FindFirstChild("SecurityPart")
+            
+            if not securityPart then
+                Warning("Auto Farm Money", "SecurityPart not found in workspace!", 3)
+                task.wait(5)
+                continue
+            end
+            
+            -- If we're downed, auto respawn
+            if character and character:GetAttribute("Downed") then
+                pcall(function()
+                    ReplicatedStorage.Events.Player.ChangePlayerMode:FireServer(true)
+                end)
+                
+                -- Teleport to safe spot after respawn
+                task.wait(1)
+                local newChar = player.Character
+                if newChar and newChar:FindFirstChild("HumanoidRootPart") then
+                    newChar.HumanoidRootPart.CFrame = securityPart.CFrame + Vector3.new(0, 3, 0)
+                end
+                task.wait(1)
+            
+            -- If we're alive, revive others
+            elseif character and character:FindFirstChild("HumanoidRootPart") then
+                local myHRP = character.HumanoidRootPart
+                local downedFound = false
+                
+                -- Find downed players
+                for _, pl in ipairs(Players:GetPlayers()) do
+                    if pl ~= player and isPlayerDowned(pl) then
+                        local targetRoot = getDownedRootPart(pl)
+                        if targetRoot then
+                            downedFound = true
+                            local dist = (myHRP.Position - targetRoot.Position).Magnitude
+                            
+                            -- Teleport to downed player if far
+                            if dist > reviveRange then
+                                local targetPos = targetRoot.Position
+                                myHRP.CFrame = CFrame.new(targetPos.X, targetPos.Y - 5, targetPos.Z)
+                                task.wait(0.1)
+                            end
+                            
+                            -- Revive
+                            pcall(function()
+                                interactEvent:FireServer("Revive", true, pl.Name)
+                            end)
+                            task.wait(0.2)
+                        end
+                    end
+                end
+                
+                -- If no downed players, stay at safe spot
+                if not downedFound and not character:GetAttribute("Downed") then
+                    myHRP.CFrame = securityPart.CFrame + Vector3.new(0, 3, 0)
+                end
+            end
+            
+            task.wait(loopDelay)
+        end
+    end
+    
+    local function start()
+        if farmConnection then return end
+        enabled = true
+        
+        farmConnection = task.spawn(farmLoop)
+        
+        Success("Auto Farm Money", "Activated - Stay alive & revive for money", 3)
+    end
+    
+    local function stop()
+        enabled = false
+        
+        if farmConnection then
+            task.cancel(farmConnection)
+            farmConnection = nil
+        end
+        
+        Info("Auto Farm Money", "Disabled", 2)
+    end
+    
+    return {
+        Start = start,
+        Stop = stop,
+        IsEnabled = function() return enabled end
+    }
+end)()
+
+-- ========================================================================== --
+--                         AUTO FARM TICKETS MODULE                           --
+-- ========================================================================== --
+
+local AutoFarmTicketsModule = (function()
+    local enabled = false
+    local farmConnection = nil
+    local yOffset = 15
+    local currentTicket = nil
+    local ticketProcessedTime = 0
+    
+    local function farmLoop()
+        while enabled do
+            local character = player.Character
+            if not character then 
+                task.wait(1)
+                continue 
+            end
+            
+            local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+            if not humanoidRootPart then 
+                task.wait(1)
+                continue 
+            end
+            
+            local securityPart = workspace:FindFirstChild("SecurityPart")
+            if not securityPart then
+                Warning("Auto Farm Tickets", "SecurityPart not found!", 3)
+                task.wait(5)
+                continue
+            end
+            
+            -- Auto respawn if downed
+            if character:GetAttribute("Downed") then
+                pcall(function()
+                    ReplicatedStorage.Events.Player.ChangePlayerMode:FireServer(true)
+                end)
+                humanoidRootPart.CFrame = securityPart.CFrame + Vector3.new(0, 3, 0)
+                task.wait(1)
+                continue
+            end
+            
+            -- Find tickets
+            local tickets = workspace:FindFirstChild("Game") 
+                and workspace.Game:FindFirstChild("Effects") 
+                and workspace.Game.Effects:FindFirstChild("Tickets")
+            
+            if tickets then
+                local activeTickets = tickets:GetChildren()
+                
+                if #activeTickets > 0 then
+                    -- Select ticket
+                    if not currentTicket or not currentTicket.Parent then
+                        currentTicket = activeTickets[1]
+                        ticketProcessedTime = tick()
+                    end
+                    
+                    -- Farm ticket
+                    if currentTicket and currentTicket.Parent then
+                        local ticketPart = currentTicket:FindFirstChild("HumanoidRootPart") 
+                            or (currentTicket:IsA("BasePart") and currentTicket)
+                        
+                        if ticketPart then
+                            -- Hover above ticket
+                            local targetPosition = ticketPart.Position + Vector3.new(0, yOffset, 0)
+                            humanoidRootPart.CFrame = CFrame.new(targetPosition)
+                            
+                            -- Dive down to collect after delay
+                            if tick() - ticketProcessedTime > 0.1 then
+                                humanoidRootPart.CFrame = ticketPart.CFrame
+                            end
+                        else
+                            currentTicket = nil
+                        end
+                    else
+                        -- No ticket, go to safe spot
+                        humanoidRootPart.CFrame = securityPart.CFrame + Vector3.new(0, 3, 0)
+                        currentTicket = nil
+                    end
+                else
+                    -- No tickets available
+                    humanoidRootPart.CFrame = securityPart.CFrame + Vector3.new(0, 3, 0)
+                    currentTicket = nil
+                end
+            else
+                -- Tickets folder not found
+                humanoidRootPart.CFrame = securityPart.CFrame + Vector3.new(0, 3, 0)
+                currentTicket = nil
+            end
+            
+            task.wait(0.05)
+        end
+    end
+    
+    local function start()
+        if farmConnection then return end
+        enabled = true
+        currentTicket = nil
+        
+        farmConnection = task.spawn(farmLoop)
+        
+        Success("Auto Farm Tickets", "Activated - Collecting tickets automatically", 3)
+    end
+    
+    local function stop()
+        enabled = false
+        currentTicket = nil
+        
+        if farmConnection then
+            task.cancel(farmConnection)
+            farmConnection = nil
+        end
+        
+        -- Return to safe spot
+        local character = player.Character
+        if character then
+            local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+            local securityPart = workspace:FindFirstChild("SecurityPart")
+            if humanoidRootPart and securityPart then
+                humanoidRootPart.CFrame = securityPart.CFrame + Vector3.new(0, 3, 0)
+            end
+        end
+        
+        Info("Auto Farm Tickets", "Disabled", 2)
+    end
+    
+    return {
+        Start = start,
+        Stop = stop,
+        IsEnabled = function() return enabled end
+    }
+end)()
+
+-- ========================================================================== --
+--                         AFK FARM MODULE                                    --
+-- ========================================================================== --
+
+local AFKFarmModule = (function()
+    local enabled = false
+    local farmConnection = nil
+    
+    local function farmLoop()
+        while enabled do
+            local securityPart = workspace:FindFirstChild("SecurityPart")
+            if not securityPart then 
+                task.wait(1)
+                continue 
+            end
+            
+            local character = player.Character
+            if not character then 
+                task.wait(1)
+                continue 
+            end
+            
+            local rootPart = character:FindFirstChild("HumanoidRootPart")
+            if not rootPart then 
+                task.wait(1)
+                continue 
+            end
+            
+            -- Stay at safe spot if not downed
+            if not character:GetAttribute("Downed") then
+                rootPart.CFrame = securityPart.CFrame + Vector3.new(0, 3, 0)
+            end
+            
+            task.wait(0.1)
+        end
+    end
+    
+    local function start()
+        if farmConnection then return end
+        enabled = true
+        
+        farmConnection = task.spawn(farmLoop)
+        
+        Success("AFK Farm", "Activated - Staying safe at SecurityPart", 2)
+    end
+    
+    local function stop()
+        enabled = false
+        
+        if farmConnection then
+            task.cancel(farmConnection)
+            farmConnection = nil
+        end
+        
+        Info("AFK Farm", "Disabled", 2)
+    end
+    
+    return {
+        Start = start,
+        Stop = stop,
+        IsEnabled = function() return enabled end
+    }
+end)()
+
+-- ========================================================================== --
+--                         PLAYER ADJUSTMENTS MODULE                          --
+-- ========================================================================== --
+
+local PlayerAdjustmentsModule = (function()
+    local currentSettings = {
+        Speed = 1500,
+        JumpCap = 1,
+        AirStrafeAcceleration = 187
+    }
+    
+    local applyMode = "Not Optimized" -- atau "Optimized"
+    
+    -- Required fields untuk deteksi movement tables
+    local requiredFields = {
+        "Friction", "AirStrafeAcceleration", "JumpHeight", "RunDeaccel",
+        "JumpSpeedMultiplier", "JumpCap", "SprintCap", "WalkSpeedMultiplier",
+        "BhopEnabled", "Speed", "AirAcceleration", "RunAccel", "SprintAcceleration"
+    }
+    
+    -- Check apakah table punya semua field yang dibutuhkan
+    local function hasAllFields(tbl)
+        if type(tbl) ~= "table" then return false end
+        
+        for _, field in ipairs(requiredFields) do
+            if rawget(tbl, field) == nil then return false end
+        end
+        
+        return true
+    end
+    
+    -- Cari semua movement config tables di game
+    local function getConfigTables()
+        local tables = {}
+        
+        for _, obj in ipairs(getgc(true)) do
+            local success, result = pcall(function()
+                if hasAllFields(obj) then 
+                    return obj 
+                end
+            end)
+            
+            if success and result then
+                table.insert(tables, result)
+            end
+        end
+        
+        return tables
+    end
+    
+    -- Apply callback ke semua tables
+    local function applyToTables(callback)
+        local targets = getConfigTables()
+        
+        if #targets == 0 then
+            Warning("Player Settings", "No config tables found!", 2)
+            return
+        end
+        
+        if applyMode == "Optimized" then
+            -- Optimized: batch apply dengan delay
+            task.spawn(function()
+                for i, tableObj in ipairs(targets) do
+                    if tableObj and typeof(tableObj) == "table" then
+                        pcall(callback, tableObj)
+                    end
+                    
+                    -- Delay setiap 3 tables
+                    if i % 3 == 0 then
+                        task.wait()
+                    end
+                end
+            end)
+        else
+            -- Not Optimized: langsung apply semua
+            for i, tableObj in ipairs(targets) do
+                if tableObj and typeof(tableObj) == "table" then
+                    pcall(callback, tableObj)
+                end
+            end
+        end
+    end
+    
+    -- Set speed
+    local function setSpeed(speed)
+        local val = tonumber(speed)
+        if val and val >= 1450 and val <= 100000000 then
+            currentSettings.Speed = val
+            
+            applyToTables(function(obj)
+                obj.Speed = val
+            end)
+            
+            Success("Player Speed", "Set to: " .. val, 1)
+            return true
+        else
+            Error("Player Speed", "Value must be between 1450 and 100000000", 2)
+            return false
+        end
+    end
+    
+    -- Set jump cap
+    local function setJumpCap(cap)
+        local val = tonumber(cap)
+        if val and val >= 0.1 and val <= 5000000 then
+            currentSettings.JumpCap = val
+            
+            applyToTables(function(obj)
+                obj.JumpCap = val
+            end)
+            
+            Success("Jump Cap", "Set to: " .. val, 1)
+            return true
+        else
+            Error("Jump Cap", "Value must be between 0.1 and 5000000", 2)
+            return false
+        end
+    end
+    
+    -- Set air strafe acceleration
+    local function setStrafeAccel(accel)
+        local val = tonumber(accel)
+        if val and val >= 1 and val <= 1000000000 then
+            currentSettings.AirStrafeAcceleration = val
+            
+            applyToTables(function(obj)
+                obj.AirStrafeAcceleration = val
+            end)
+            
+            Success("Strafe Accel", "Set to: " .. val, 1)
+            return true
+        else
+            Error("Strafe Accel", "Value must be between 1 and 1000000000", 2)
+            return false
+        end
+    end
+    
+    -- Set apply mode
+    local function setApplyMode(mode)
+        applyMode = mode
+        Info("Apply Mode", "Changed to: " .. mode, 1)
+    end
+    
+    return {
+        SetSpeed = setSpeed,
+        SetJumpCap = setJumpCap,
+        SetStrafeAccel = setStrafeAccel,
+        SetApplyMode = setApplyMode,
+        GetCurrentSettings = function() return currentSettings end,
+        GetApplyMode = function() return applyMode end
+    }
+end)()
+
+-- ========================================================================== --
+--                         JUMP POWER SYSTEM                                  --
+-- ========================================================================== --
+
+local JumpPowerModule = (function()
+    local jumpPowerValue = 3.5
+    local maxJumps = math.huge
+    local currentJumpCount = 0
+    local jumpHumanoid = nil
+    local jumpRootPart = nil
+    
+    local stateConnection = nil
+    local jumpConnection = nil
+    local charConnection = nil
+    
+    -- Setup jump system untuk character
+    local function setupCharacter(character)
+        if not character then return end
+        
+        -- Cleanup old connections
+        if stateConnection then stateConnection:Disconnect() stateConnection = nil end
+        if jumpConnection then jumpConnection:Disconnect() jumpConnection = nil end
+        
+        task.wait(0.5)
+        
+        jumpHumanoid = character:FindFirstChild("Humanoid")
+        jumpRootPart = character:FindFirstChild("HumanoidRootPart")
+        
+        if not jumpHumanoid or not jumpRootPart then return end
+        
+        currentJumpCount = 0
+        
+        -- Reset jump count saat landing
+        stateConnection = jumpHumanoid.StateChanged:Connect(function(oldState, newState)
+            if newState == Enum.HumanoidStateType.Landed then
+                currentJumpCount = 0
+            end
+        end)
+        
+        -- Handle jumping
+        jumpConnection = jumpHumanoid.Jumping:Connect(function(isJumping)
+            if isJumping and currentJumpCount < maxJumps then
+                currentJumpCount = currentJumpCount + 1
+                jumpHumanoid.JumpHeight = jumpPowerValue
+                
+                -- Apply impulse for multi-jump
+                if currentJumpCount > 1 and jumpRootPart then
+                    jumpRootPart:ApplyImpulse(Vector3.new(0, jumpPowerValue * jumpRootPart.Mass, 0))
+                end
+            end
+        end)
+    end
+    
+    -- Initialize
+    local function initialize()
+        -- Setup current character
+        if player.Character then
+            task.spawn(function()
+                setupCharacter(player.Character)
+            end)
+        end
+        
+        -- Setup for future characters
+        charConnection = player.CharacterAdded:Connect(function(newChar)
+            setupCharacter(newChar)
+        end)
+    end
+    
+    -- Set jump power value
+    local function setJumpPower(value)
+        local val = tonumber(value)
+        if val and val > 0 and val <= 1000 then
+            jumpPowerValue = val
+            
+            if jumpHumanoid then
+                jumpHumanoid.JumpHeight = val
+            end
+            
+            Success("Jump Power", "Set to: " .. val, 1)
+            return true
+        else
+            Error("Jump Power", "Value must be between 0.1 and 1000", 2)
+            return false
+        end
+    end
+    
+    -- Cleanup
+    local function cleanup()
+        if stateConnection then stateConnection:Disconnect() end
+        if jumpConnection then jumpConnection:Disconnect() end
+        if charConnection then charConnection:Disconnect() end
+    end
+    
+    -- Auto-initialize
+    initialize()
+    
+    return {
+        SetJumpPower = setJumpPower,
+        GetJumpPower = function() return jumpPowerValue end,
+        Cleanup = cleanup
+    }
+end)()
+
+-- ========================================================================== --
+--                         FOV ADJUSTMENT MODULE                              --
+-- ========================================================================== --
+
+local FOVModule = (function()
+    local changeSettingRemote = ReplicatedStorage:WaitForChild("Events")
+        :WaitForChild("Data"):WaitForChild("ChangeSetting")
+    local updatedEvent = ReplicatedStorage:WaitForChild("Modules")
+        :WaitForChild("Client"):WaitForChild("Settings"):WaitForChild("Updated")
+    
+    local function setFOV(fov)
+        local num = tonumber(fov)
+        if num and num >= 1 and num <= 1000 then
+            pcall(function()
+                changeSettingRemote:InvokeServer(2, num)
+                updatedEvent:Fire(2, num)
+            end)
+            
+            Success("FOV", "Set to: " .. num, 1)
+            return true
+        else
+            Error("FOV", "Value must be between 1 and 1000", 2)
+            return false
+        end
+    end
+    
+    return {
+        SetFOV = setFOV
     }
 end)()
 
@@ -1694,24 +2352,487 @@ local StunBatonModule = (function()
     }
 end)()
 
--- MOVEMENT FEATURES MODULE
-local MovementFeaturesModule = (function()
-    local infiniteSlideEnabled = false
-    local slideFrictionValue = -8
-    local movementTables = {}
-    local infiniteSlideHeartbeat = nil
-    local infiniteSlideCharacterConn = nil
-    
-    local bhopEnabled = false
-    local bhopMode = "Bounce"
+-- ========================================================================== --
+--                         AUTO JUMP / BHOP SYSTEM                            --
+-- ========================================================================== --
+
+local AutoJumpModule = (function()
+    local enabled = false
+    local holdEnabled = false
+    local autoJumpType = "Bounce"
+    local bhopMode = "Acceleration"
+    local bhopAccelValue = -0.5
     local jumpCooldown = 0.7
+    local rotationEnabled = false
+    local rotationSpeed = 100000
+    
     local bhopConnection = nil
-    local lastJump = 0
-    local bhopHoldActive = false
+    local rotationConnection = nil
+    local characterConnection = nil
+    local frictionTables = {}
+    
+    local Character = nil
+    local Humanoid = nil
+    local HumanoidRootPart = nil
+    local LastJump = 0
     
     local GROUND_CHECK_OFFSET = 3.5
     local GROUND_CHECK_RAY_LENGTH = 4
     local MAX_SLOPE_ANGLE = 45
+    
+    local bhopHoldActive = false
+    
+    -- ==================== ROTATION 360° ====================
+    local function startRotation()
+        if rotationConnection then
+            rotationConnection:Disconnect()
+            rotationConnection = nil
+        end
+        
+        if not rotationEnabled or not HumanoidRootPart then return end
+        
+        rotationConnection = RunService.Heartbeat:Connect(function(deltaTime)
+            if HumanoidRootPart and HumanoidRootPart.Parent then
+                local currentRotation = HumanoidRootPart.Orientation
+                local newRotation = Vector3.new(
+                    currentRotation.X,
+                    currentRotation.Y + (rotationSpeed * deltaTime),
+                    currentRotation.Z
+                )
+                HumanoidRootPart.Orientation = newRotation
+            else
+                if rotationConnection then
+                    rotationConnection:Disconnect()
+                    rotationConnection = nil
+                end
+            end
+        end)
+    end
+    
+    local function stopRotation()
+        if rotationConnection then
+            rotationConnection:Disconnect()
+            rotationConnection = nil
+        end
+    end
+    
+    -- ==================== GROUND CHECK ====================
+    local function IsOnGround()
+        if not Character or not HumanoidRootPart or not Humanoid then 
+            return false 
+        end
+        
+        local state = Humanoid:GetState()
+        if state == Enum.HumanoidStateType.Jumping or 
+           state == Enum.HumanoidStateType.Freefall or
+           state == Enum.HumanoidStateType.Swimming then
+            return false
+        end
+        
+        if Humanoid:GetState() == Enum.HumanoidStateType.Running then
+            return true
+        end
+        
+        local rayOrigin = HumanoidRootPart.Position
+        local rayDirection = Vector3.new(0, -GROUND_CHECK_RAY_LENGTH, 0)
+        
+        local raycastParams = RaycastParams.new()
+        raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+        raycastParams.FilterDescendantsInstances = {Character}
+        raycastParams.IgnoreWater = true
+        
+        local raycastResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
+        
+        if raycastResult then
+            local surfaceNormal = raycastResult.Normal
+            local angle = math.deg(math.acos(surfaceNormal:Dot(Vector3.new(0, 1, 0))))
+            
+            if angle <= MAX_SLOPE_ANGLE then
+                local heightDiff = math.abs(rayOrigin.Y - raycastResult.Position.Y)
+                return heightDiff <= GROUND_CHECK_OFFSET
+            end
+        end
+        
+        if HumanoidRootPart.Velocity.Y > -1 and HumanoidRootPart.Velocity.Y < 1 then
+            return true
+        end
+        
+        return false
+    end
+    
+    -- ==================== FRICTION TABLES ====================
+    local function findFrictionTables()
+        frictionTables = {}
+        
+        for _, obj in pairs(getgc(true)) do
+            if type(obj) == "table" and rawget(obj, "Friction") then
+                table.insert(frictionTables, {
+                    obj = obj,
+                    original = obj.Friction
+                })
+            end
+        end
+    end
+    
+    local function applyBhopFriction()
+        local isActive = enabled or bhopHoldActive
+        
+        if isActive and bhopMode == "Acceleration" then
+            if #frictionTables == 0 then
+                findFrictionTables()
+            end
+            
+            for _, tableData in ipairs(frictionTables) do
+                if tableData.obj and type(tableData.obj) == "table" then
+                    pcall(function()
+                        tableData.obj.Friction = bhopAccelValue
+                    end)
+                end
+            end
+        else
+            for _, tableData in ipairs(frictionTables) do
+                if tableData.obj and type(tableData.obj) == "table" and tableData.original then
+                    pcall(function()
+                        tableData.obj.Friction = tableData.original
+                    end)
+                end
+            end
+        end
+    end
+    
+    -- ==================== BHOP UPDATE ====================
+    local function updateBhop()
+        local isActive = enabled or bhopHoldActive
+        
+        if not isActive then return end
+        
+        if not Character or not Humanoid or not HumanoidRootPart then
+            Character = player.Character
+            if Character then
+                Humanoid = Character:FindFirstChildOfClass("Humanoid")
+                HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
+            end
+            if not Humanoid or not HumanoidRootPart then return end
+        end
+        
+        if Humanoid:GetState() == Enum.HumanoidStateType.Dead then
+            return
+        end
+        
+        local now = tick()
+        
+        if autoJumpType == "Realistic" then
+            pcall(function()
+                player.PlayerScripts.Events.temporary_events.JumpReact:Fire()
+                player.PlayerScripts.Events.temporary_events.EndJump:Fire()
+            end)
+        else  -- BOUNCE
+            if IsOnGround() and (now - LastJump) > 0.25 then
+                Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                LastJump = now
+            end
+        end
+    end
+    
+    -- ==================== LOAD/UNLOAD ====================
+    local function loadBhop()
+        findFrictionTables()
+        applyBhopFriction()
+        
+        if bhopConnection then
+            bhopConnection:Disconnect()
+        end
+        
+        bhopConnection = RunService.Heartbeat:Connect(function(deltaTime)
+            updateBhop()
+        end)
+    end
+    
+    local function unloadBhop()
+        if bhopConnection then
+            bhopConnection:Disconnect()
+            bhopConnection = nil
+        end
+        
+        bhopHoldActive = false
+        applyBhopFriction()
+    end
+    
+    local function checkBhopState()
+        local shouldLoad = enabled or bhopHoldActive
+        
+        if shouldLoad then
+            loadBhop()
+            if rotationEnabled and enabled then
+                startRotation()
+            else
+                stopRotation()
+            end
+        else
+            unloadBhop()
+            stopRotation()
+        end
+    end
+    
+    -- ==================== CHARACTER UPDATES ====================
+    RunService.Heartbeat:Connect(function()
+        if not Character or not Character:IsDescendantOf(workspace) then
+            Character = player.Character
+            if Character then
+                Humanoid = Character:FindFirstChildOfClass("Humanoid")
+                HumanoidRootPart = Character:FindFirstChild("HumanoidRootPart")
+                if rotationEnabled and enabled then
+                    startRotation()
+                end
+            else
+                Humanoid = nil
+                HumanoidRootPart = nil
+                stopRotation()
+            end
+        end
+    end)
+    
+    characterConnection = player.CharacterAdded:Connect(function(character)
+        Character = character
+        task.wait(0.5)
+        Humanoid = character:WaitForChild("Humanoid")
+        HumanoidRootPart = character:WaitForChild("HumanoidRootPart")
+        
+        if enabled or bhopHoldActive then
+            task.wait(1)
+            findFrictionTables()
+            checkBhopState()
+        end
+        
+        if rotationEnabled and enabled then
+            startRotation()
+        end
+    end)
+    
+    -- ==================== INPUT HANDLERS ====================
+    UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+        if gameProcessedEvent then return end
+        
+        if input.KeyCode == Enum.KeyCode.Space and holdEnabled then
+            bhopHoldActive = true
+            checkBhopState()
+        end
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if input.KeyCode == Enum.KeyCode.Space then
+            bhopHoldActive = false
+            checkBhopState()
+        end
+    end)
+    
+    -- ==================== PUBLIC FUNCTIONS ====================
+    local function start()
+        if enabled then return end
+        enabled = true
+        checkBhopState()
+        Success("Auto Jump", "Activated (" .. autoJumpType .. " mode)", 2)
+    end
+    
+    local function stop()
+        if not enabled then return end
+        enabled = false
+        checkBhopState()
+        Info("Auto Jump", "Disabled", 2)
+    end
+    
+    local function toggleRotation(state)
+        rotationEnabled = state
+        if state and enabled then
+            startRotation()
+            Success("Rotation 360°", "Activated", 2)
+        else
+            stopRotation()
+            Info("Rotation 360°", "Disabled", 2)
+        end
+    end
+    
+    return {
+        Start = start,
+        Stop = stop,
+        IsEnabled = function() return enabled end,
+        
+        SetAutoJumpType = function(type)
+            autoJumpType = type
+            Info("Auto Jump", "Type: " .. type, 1)
+        end,
+        
+        SetBhopMode = function(mode)
+            bhopMode = mode
+            checkBhopState()
+            Info("Bhop Mode", mode, 1)
+        end,
+        
+        SetBhopAccel = function(accel)
+            local num = tonumber(accel)
+            if num and num < 0 then
+                bhopAccelValue = num
+                if enabled or bhopHoldActive then
+                    applyBhopFriction()
+                end
+                Success("Bhop Accel", "Set to: " .. num, 1)
+            end
+        end,
+        
+        SetJumpCooldown = function(cooldown)
+            local num = tonumber(cooldown)
+            if num and num > 0 then
+                jumpCooldown = num
+                Success("Jump Cooldown", "Set to: " .. num .. "s", 1)
+            end
+        end,
+        
+        ToggleRotation = toggleRotation,
+        IsRotationEnabled = function() return rotationEnabled end,
+        
+        SetHoldEnabled = function(state)
+            holdEnabled = state
+        end
+    }
+end)()
+
+-- ========================================================================== --
+--                         BOUNCE MODIFICATION MODULE                         --
+-- ========================================================================== --
+
+local BounceModule = (function()
+    local enabled = false
+    local bounceSpeed = 110
+    local bounceConnection = nil
+    
+    local function updateBounce()
+        if not enabled then return end
+        
+        local gamePlayers = workspace:FindFirstChild("Game") 
+            and workspace.Game:FindFirstChild("Players")
+        if not gamePlayers then return end
+        
+        local playerModel = gamePlayers:FindFirstChild(player.Name)
+        if not playerModel then return end
+        
+        local humanoid = playerModel:FindFirstChild("Humanoid")
+        if not humanoid then return end
+        
+        humanoid.WalkSpeed = bounceSpeed
+    end
+    
+    local function start()
+        if bounceConnection then return end
+        enabled = true
+        
+        bounceConnection = RunService.Heartbeat:Connect(updateBounce)
+        
+        Success("Bounce Mod", "Activated (Speed: " .. bounceSpeed .. ")", 2)
+    end
+    
+    local function stop()
+        enabled = false
+        
+        if bounceConnection then
+            bounceConnection:Disconnect()
+            bounceConnection = nil
+        end
+        
+        -- Reset speed
+        local gamePlayers = workspace:FindFirstChild("Game") 
+            and workspace.Game:FindFirstChild("Players")
+        if gamePlayers then
+            local playerModel = gamePlayers:FindFirstChild(player.Name)
+            if playerModel then
+                local humanoid = playerModel:FindFirstChild("Humanoid")
+                if humanoid then
+                    humanoid.WalkSpeed = 0
+                end
+            end
+        end
+        
+        Info("Bounce Mod", "Disabled", 2)
+    end
+    
+    player.CharacterAdded:Connect(function()
+        task.wait(1)
+        if enabled then
+            updateBounce()
+        end
+    end)
+    
+    return {
+        Start = start,
+        Stop = stop,
+        IsEnabled = function() return enabled end,
+        SetSpeed = function(speed)
+            local num = tonumber(speed)
+            if num and num > 0 and num <= 1000 then
+                bounceSpeed = num
+                if enabled then
+                    updateBounce()
+                    Success("Bounce Speed", "Set to: " .. num, 1)
+                end
+            end
+        end
+    }
+end)()
+
+-- ========================================================================== --
+--                         GRAVITY SYSTEM MODULE                              --
+-- ========================================================================== --
+
+local GravityModule = (function()
+    local enabled = false
+    local originalGravity = workspace.Gravity
+    local gravityValue = 10
+    
+    local function start()
+        if enabled then return end
+        enabled = true
+        
+        workspace.Gravity = gravityValue
+        
+        Success("Gravity", "Activated (Value: " .. gravityValue .. ")", 2)
+    end
+    
+    local function stop()
+        if not enabled then return end
+        enabled = false
+        
+        workspace.Gravity = originalGravity
+        
+        Info("Gravity", "Disabled (Reset to: " .. originalGravity .. ")", 2)
+    end
+    
+    return {
+        Start = start,
+        Stop = stop,
+        IsEnabled = function() return enabled end,
+        SetGravity = function(gravity)
+            local num = tonumber(gravity)
+            if num and num > 0 then
+                gravityValue = num
+                if enabled then
+                    workspace.Gravity = num
+                    Success("Gravity", "Set to: " .. num, 1)
+                end
+            end
+        end,
+        GetOriginalGravity = function() return originalGravity end
+    }
+end)()
+
+-- ========================================================================== --
+--                         INFINITE SLIDE MODULE (KEEP)                       --
+-- ========================================================================== --
+
+local InfiniteSlideModule = (function()
+    local enabled = false
+    local slideFrictionValue = -8
+    local movementTables = {}
+    local slideConnection = nil
+    local charConnection = nil
     
     local requiredKeys = {
         "Friction", "AirStrafeAcceleration", "JumpHeight", "RunDeaccel",
@@ -1756,10 +2877,12 @@ local MovementFeaturesModule = (function()
         return playersFolder:FindFirstChild(player.Name)
     end
     
-    local function infiniteSlideHeartbeatFunc()
-        if not infiniteSlideEnabled then return end
+    local function slideUpdate()
+        if not enabled then return end
+        
         local playerModel = getPlayerModel()
         if not playerModel then return end
+        
         local state = playerModel:GetAttribute("State")
         
         if state == "Slide" then
@@ -1773,197 +2896,70 @@ local MovementFeaturesModule = (function()
         end
     end
     
-    local function onCharacterAddedSlide(character)
-        if not infiniteSlideEnabled then return end
+    local function onCharacterAdded(character)
+        if not enabled then return end
+        
         for i = 1, 5 do
             task.wait(0.5)
             if getPlayerModel() then break end
         end
+        
         task.wait(0.5)
         findMovementTables()
     end
     
-    local function toggleInfiniteSlide(state)
-        infiniteSlideEnabled = state
+    local function start()
+        if enabled then return end
+        enabled = true
         
-        if state then
-            findMovementTables()
-            if not infiniteSlideCharacterConn then
-                infiniteSlideCharacterConn = player.CharacterAdded:Connect(onCharacterAddedSlide)
-            end
-            if player.Character then
-                task.spawn(function() onCharacterAddedSlide(player.Character) end)
-            end
-            if infiniteSlideHeartbeat then infiniteSlideHeartbeat:Disconnect() end
-            infiniteSlideHeartbeat = RunService.Heartbeat:Connect(infiniteSlideHeartbeatFunc)
-            Success("Infinite Slide", "Activated (Speed: " .. slideFrictionValue .. ")", 2)
-        else
-            if infiniteSlideHeartbeat then
-                infiniteSlideHeartbeat:Disconnect()
-                infiniteSlideHeartbeat = nil
-            end
-            setSlideFriction(5)
-            movementTables = {}
-            Info("Infinite Slide", "Deactivated", 2)
-        end
-        return infiniteSlideEnabled
-    end
-    
-    local function setSlideSpeed(value)
-        local num = tonumber(value)
-        if num then
-            slideFrictionValue = num
-            if infiniteSlideEnabled then
-                setSlideFriction(slideFrictionValue)
-                Success("Slide Speed", "Set to: " .. num, 1)
-            end
-            return true
-        end
-        return false
-    end
-    
-    local function IsOnGround(character, humanoid, rootPart)
-        if not character or not humanoid or not rootPart then return false end
-        local state = humanoid:GetState()
-        if state == Enum.HumanoidStateType.Jumping or 
-           state == Enum.HumanoidStateType.Freefall or
-           state == Enum.HumanoidStateType.Swimming then
-            return false
-        end
-        if humanoid:GetState() == Enum.HumanoidStateType.Running then
-            return true
-        end
-        
-        local rayOrigin = rootPart.Position
-        local rayDirection = Vector3.new(0, -GROUND_CHECK_RAY_LENGTH, 0)
-        local raycastParams = RaycastParams.new()
-        raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
-        raycastParams.FilterDescendantsInstances = {character}
-        raycastParams.IgnoreWater = true
-        local raycastResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
-        
-        if raycastResult then
-            local surfaceNormal = raycastResult.Normal
-            local angle = math.deg(math.acos(surfaceNormal:Dot(Vector3.new(0, 1, 0))))
-            if angle <= MAX_SLOPE_ANGLE then
-                local heightDiff = math.abs(rayOrigin.Y - raycastResult.Position.Y)
-                return heightDiff <= GROUND_CHECK_OFFSET
-            end
-        end
-        if rootPart.Velocity.Y > -1 and rootPart.Velocity.Y < 1 then
-            return true
-        end
-        return false
-    end
-    
-    local function updateBhop()
-        if not bhopEnabled and not bhopHoldActive then return end
-        local character = player.Character
-        if not character then return end
-        local humanoid = character:FindFirstChildOfClass("Humanoid")
-        local rootPart = character:FindFirstChild("HumanoidRootPart")
-        if not humanoid or not rootPart then return end
-        if humanoid:GetState() == Enum.HumanoidStateType.Dead then return end
-        
-        local now = tick()
-        if IsOnGround(character, humanoid, rootPart) and (now - lastJump) > jumpCooldown then
-            if bhopMode == "Realistic" then
-                pcall(function()
-                    player.PlayerScripts.Events.temporary_events.JumpReact:Fire()
-                    task.wait(0.05)
-                    player.PlayerScripts.Events.temporary_events.EndJump:Fire()
-                end)
-            else
-                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-            end
-            lastJump = now
-        end
-    end
-    
-    local function toggleBhop(state)
-        bhopEnabled = state
-        if state or bhopHoldActive then
-            if not bhopConnection then
-                bhopConnection = RunService.Heartbeat:Connect(updateBhop)
-            end
-        else
-            if bhopConnection and not bhopHoldActive then
-                bhopConnection:Disconnect()
-                bhopConnection = nil
-            end
-        end
-        return bhopEnabled
-    end
-    
-    local function setBhopMode(mode)
-        bhopMode = mode
-        return true
-    end
-    
-    local function setJumpCooldown(value)
-        local num = tonumber(value)
-        if num and num > 0 then
-            jumpCooldown = num
-            return true
-        end
-        return false
-    end
-    
-    local function setBhopHoldActive(active)
-        bhopHoldActive = active
-        toggleBhop(bhopEnabled)
-    end
-    
-    UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        if gameProcessed then return end
-        if input.KeyCode == Enum.KeyCode.Space then
-            setBhopHoldActive(true)
-        end
-    end)
-    
-    UserInputService.InputEnded:Connect(function(input)
-        if input.KeyCode == Enum.KeyCode.Space then
-            setBhopHoldActive(false)
-        end
-    end)
-    
-    player.CharacterAdded:Connect(function(character)
-        onCharacterAddedSlide(character)
-        if bhopEnabled or bhopHoldActive then
-            task.wait(1)
-            lastJump = 0
-        end
-    end)
-    
-    player.CharacterRemoving:Connect(function()
-        lastJump = 0
-    end)
-    
-    Players.PlayerRemoving:Connect(function(leavingPlayer)
-        if leavingPlayer == player then
-            if infiniteSlideHeartbeat then infiniteSlideHeartbeat:Disconnect() end
-            if infiniteSlideCharacterConn then infiniteSlideCharacterConn:Disconnect() end
-            if bhopConnection then bhopConnection:Disconnect() end
-        end
-    end)
-    
-    task.spawn(function()
-        task.wait(2)
         findMovementTables()
-    end)
+        
+        if player.Character then
+            task.spawn(function() 
+                onCharacterAdded(player.Character) 
+            end)
+        end
+        
+        charConnection = player.CharacterAdded:Connect(onCharacterAdded)
+        slideConnection = RunService.Heartbeat:Connect(slideUpdate)
+        
+        Success("Infinite Slide", "Activated (Speed: " .. slideFrictionValue .. ")", 2)
+    end
+    
+    local function stop()
+        if not enabled then return end
+        enabled = false
+        
+        if slideConnection then
+            slideConnection:Disconnect()
+            slideConnection = nil
+        end
+        
+        if charConnection then
+            charConnection:Disconnect()
+            charConnection = nil
+        end
+        
+        setSlideFriction(5)
+        movementTables = {}
+        
+        Info("Infinite Slide", "Disabled", 2)
+    end
     
     return {
-        ToggleInfiniteSlide = toggleInfiniteSlide,
-        SetSlideSpeed = setSlideSpeed,
-        IsInfiniteSlideEnabled = function() return infiniteSlideEnabled end,
-        GetSlideSpeed = function() return slideFrictionValue end,
-        
-        ToggleBhop = toggleBhop,
-        SetBhopMode = setBhopMode,
-        SetJumpCooldown = setJumpCooldown,
-        IsBhopEnabled = function() return bhopEnabled end,
-        GetBhopMode = function() return bhopMode end,
-        GetJumpCooldown = function() return jumpCooldown end,
+        Start = start,
+        Stop = stop,
+        IsEnabled = function() return enabled end,
+        SetSlideSpeed = function(speed)
+            local num = tonumber(speed)
+            if num then
+                slideFrictionValue = num
+                if enabled then
+                    setSlideFriction(num)
+                    Success("Slide Speed", "Set to: " .. num, 1)
+                end
+            end
+        end
     }
 end)()
 
@@ -2163,8 +3159,16 @@ local FlyModule = (function()
     }
 end)()
 
--- VISUAL FEATURES MODULE
+
+
+-- ========================================================================== --
+--                         VISUAL FEATURES MODULE                             --
+-- ========================================================================== --
+
 local VisualFeaturesModule = (function()
+    local Lighting = game:GetService("Lighting")
+    
+    -- Store original values
     local originalValues = {
         FogEnd = Lighting.FogEnd,
         FogStart = Lighting.FogStart,
@@ -2177,13 +3181,15 @@ local VisualFeaturesModule = (function()
         GlobalShadows = Lighting.GlobalShadows,
         Atmospheres = {}
     }
-
+    
+    -- Backup atmospheres
     for _, v in pairs(Lighting:GetChildren()) do
         if v:IsA("Atmosphere") then
             table.insert(originalValues.Atmospheres, v:Clone())
         end
     end
-
+    
+    -- ==================== FAKE STREAK ====================
     local function setFakeStreak(value)
         local num = tonumber(value)
         if num then
@@ -2200,7 +3206,7 @@ local VisualFeaturesModule = (function()
         end
         return false
     end
-
+    
     local function resetStreak()
         local success, err = pcall(function()
             player:SetAttribute("Streak", nil)
@@ -2211,12 +3217,13 @@ local VisualFeaturesModule = (function()
             Error("Fake Streak", "Failed to reset streak", 1)
         end
     end
-
+    
+    -- ==================== CAMERA STRETCH ====================
     local cameraStretchConnection = nil
     local stretchHorizontal = 0.80
     local stretchVertical = 0.80
     local stretchEnabled = false
-
+    
     local function applyCameraStretch()
         local Camera = workspace.CurrentCamera
         if Camera then
@@ -2228,14 +3235,14 @@ local VisualFeaturesModule = (function()
             )
         end
     end
-
+    
     local function setupCameraStretch()
         if cameraStretchConnection then
             pcall(function() cameraStretchConnection:Disconnect() end)
         end
         cameraStretchConnection = RunService.RenderStepped:Connect(applyCameraStretch)
     end
-
+    
     local function toggleCameraStretch(state)
         stretchEnabled = state
         if state then
@@ -2249,7 +3256,7 @@ local VisualFeaturesModule = (function()
             Info("Camera Stretch", "Deactivated", 2)
         end
     end
-
+    
     local function setStretchHorizontal(value)
         local num = tonumber(value)
         if num and num > 0 then
@@ -2261,7 +3268,7 @@ local VisualFeaturesModule = (function()
         end
         return false
     end
-
+    
     local function setStretchVertical(value)
         local num = tonumber(value)
         if num and num > 0 then
@@ -2273,18 +3280,31 @@ local VisualFeaturesModule = (function()
         end
         return false
     end
-
+    
+    -- ==================== FULL BRIGHT ====================
     local fullBrightEnabled = false
-
+    local fullBrightConnection = nil
+    
     local function applyFullBright()
         pcall(function()
-            Lighting.Brightness = 2
-            Lighting.Ambient = Color3.new(1, 1, 1)
-            Lighting.OutdoorAmbient = Color3.new(1, 1, 1)
-            Lighting.ColorShift_Bottom = Color3.new(1, 1, 1)
-            Lighting.ColorShift_Top = Color3.new(1, 1, 1)
+            if Lighting.Brightness ~= 2 then
+                Lighting.Brightness = 2
+            end
+            if Lighting.Ambient ~= Color3.new(1, 1, 1) then
+                Lighting.Ambient = Color3.new(1, 1, 1)
+            end
+            if Lighting.OutdoorAmbient ~= Color3.new(1, 1, 1) then
+                Lighting.OutdoorAmbient = Color3.new(1, 1, 1)
+            end
+            if Lighting.ColorShift_Bottom ~= Color3.new(1, 1, 1) then
+                Lighting.ColorShift_Bottom = Color3.new(1, 1, 1)
+            end
+            if Lighting.ColorShift_Top ~= Color3.new(1, 1, 1) then
+                Lighting.ColorShift_Top = Color3.new(1, 1, 1)
+            end
             Lighting.GlobalShadows = false
             
+            -- Remove atmospheres
             for _, v in pairs(Lighting:GetChildren()) do
                 if v:IsA("Atmosphere") then
                     v:Destroy()
@@ -2292,7 +3312,7 @@ local VisualFeaturesModule = (function()
             end
         end)
     end
-
+    
     local function restoreLighting()
         pcall(function()
             Lighting.Brightness = originalValues.Brightness
@@ -2302,6 +3322,7 @@ local VisualFeaturesModule = (function()
             Lighting.ColorShift_Top = originalValues.ColorShift_Top
             Lighting.GlobalShadows = originalValues.GlobalShadows
             
+            -- Restore atmospheres
             for _, atmosphere in ipairs(originalValues.Atmospheres) do
                 local newAtmosphere = Instance.new("Atmosphere")
                 for _, prop in pairs({"Density", "Offset", "Color", "Decay", "Glare", "Haze"}) do
@@ -2313,19 +3334,37 @@ local VisualFeaturesModule = (function()
             end
         end)
     end
-
+    
     local function toggleFullBright(state)
         fullBrightEnabled = state
         
         if state then
             applyFullBright()
+            
+            -- Keep full bright active via connection
+            if fullBrightConnection then
+                fullBrightConnection:Disconnect()
+            end
+            
+            fullBrightConnection = RunService.Heartbeat:Connect(function()
+                if fullBrightEnabled then
+                    applyFullBright()
+                end
+            end)
+            
             Success("Full Bright", "Activated", 2)
         else
+            if fullBrightConnection then
+                fullBrightConnection:Disconnect()
+                fullBrightConnection = nil
+            end
+            
             restoreLighting()
             Info("Full Bright", "Deactivated", 2)
         end
     end
-
+    
+    -- ==================== ANTI LAG 1 (LIGHT) ====================
     local function antiLag1()
         task.spawn(function()
             pcall(function()
@@ -2350,17 +3389,18 @@ local VisualFeaturesModule = (function()
                     elseif obj:IsA("Decal") or obj:IsA("Texture") then
                         obj:Destroy()
                     elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") then
-                        obj.Enabled = false
+                        obj:Destroy()
                     elseif obj:IsA("PointLight") or obj:IsA("SpotLight") or obj:IsA("SurfaceLight") then
-                        obj.Enabled = false
+                        obj:Destroy()
                     end
                 end
                 
-                Success("Anti Lag 1", "Optimasi ringan selesai! (" .. partsChanged .. " parts)", 3)
+                Success("Anti Lag 1", "Light optimization complete! (" .. partsChanged .. " parts)", 3)
             end)
         end)
     end
-
+    
+    -- ==================== ANTI LAG 2 (AGGRESSIVE) ====================
     local function antiLag2()
         task.spawn(function()
             pcall(function()
@@ -2395,11 +3435,12 @@ local VisualFeaturesModule = (function()
                     end
                 end
                 
-                Success("Anti Lag 2", "Optimasi agresif selesai!", 3)
+                Success("Anti Lag 2", "Aggressive optimization complete!", 3)
             end)
         end)
     end
-
+    
+    -- ==================== ANTI LAG 3 (TEXTURES) ====================
     local function antiLag3()
         task.spawn(function()
             pcall(function()
@@ -2430,9 +3471,10 @@ local VisualFeaturesModule = (function()
             end)
         end)
     end
-
+    
+    -- ==================== REMOVE FOG ====================
     local removeFogEnabled = false
-
+    
     local function applyRemoveFog()
         pcall(function()
             Lighting.FogEnd = 1000000
@@ -2443,7 +3485,7 @@ local VisualFeaturesModule = (function()
             end
         end)
     end
-
+    
     local function restoreFog()
         pcall(function()
             Lighting.FogEnd = originalValues.FogEnd
@@ -2458,7 +3500,7 @@ local VisualFeaturesModule = (function()
             end
         end)
     end
-
+    
     local function toggleRemoveFog(state)
         removeFogEnabled = state
         
@@ -2470,7 +3512,8 @@ local VisualFeaturesModule = (function()
             Info("Remove Fog", "Deactivated", 2)
         end
     end
-
+    
+    -- Character respawn handler
     player.CharacterAdded:Connect(function()
         task.wait(1)
         if fullBrightEnabled then
@@ -2480,7 +3523,7 @@ local VisualFeaturesModule = (function()
             applyRemoveFog()
         end
     end)
-
+    
     return {
         SetFakeStreak = setFakeStreak,
         ResetStreak = resetStreak,
@@ -2502,182 +3545,224 @@ local VisualFeaturesModule = (function()
     }
 end)()
 
--- LAG SWITCH MODULE
+-- ========================================================================== --
+--                         LAG SWITCH MODULE (ADVANCED)                       --
+-- ========================================================================== --
+
 local LagSwitchModule = (function()
     local enabled = false
-    local mode = "Normal"
-    local delay = 0.1
-    local intensity = 1000000
+    local lagMode = "Normal"
+    local lagDelay = 0.1
+    local lagIntensity = 1000000
     local demonHeight = 10
     local demonSpeed = 80
-    local keybind = "F12"
-    local isActive = false
+    local isLagActive = false
     
-    local function performNormalLag()
+    -- ==================== NORMAL LAG (MATH) ====================
+    local function performMathLag()
         local startTime = tick()
-        local duration = delay
+        local duration = lagDelay
         
         while tick() - startTime < duration do
-            for i = 1, intensity do
+            for i = 1, lagIntensity do
                 local a = math.random(1, 1000000) * math.random(1, 1000000)
                 a = a / math.random(1, 10000)
                 local b = math.sqrt(math.random(1, 1000000))
                 b = b * math.pi * math.exp(1)
+                local c = math.sin(math.rad(math.random(1, 360))) * math.cos(math.rad(math.random(1, 360)))
             end
         end
     end
     
+    -- ==================== DEMON MODE (LAG + RISE) ====================
     local function performDemonLag()
         local startTime = tick()
-        local duration = delay
+        local duration = lagDelay
         
+        -- Part 1: Math lag in background
         task.spawn(function()
-            local startLag = tick()
-            while tick() - startLag < duration do
-                for i = 1, math.floor(intensity / 2) do
+            local startLagTime = tick()
+            while tick() - startLagTime < duration do
+                for i = 1, math.floor(lagIntensity / 2) do
                     local a = math.random(1, 1000000) * math.random(1, 1000000)
                     a = a / math.random(1, 10000)
+                    local b = math.sqrt(math.random(1, 1000000))
+                    b = b * math.pi * math.exp(1)
                 end
             end
         end)
         
+        -- Part 2: Rise player
         local character = player.Character
+        
         if character then
-            local rootPart = character:FindFirstChild("HumanoidRootPart")
+            local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
             local humanoid = character:FindFirstChild("Humanoid")
             
-            if rootPart and humanoid then
-                local startHeight = rootPart.Position.Y
+            if humanoidRootPart and humanoid then
+                local startHeight = humanoidRootPart.Position.Y
                 
+                -- Create BodyThrust for upward force
                 local bodyThrust = Instance.new("BodyThrust")
+                bodyThrust.Name = "DemonRiseThrust"
                 bodyThrust.Force = Vector3.new(0, demonSpeed * 500, 0)
                 bodyThrust.Location = Vector3.new(0, 0, 0)
-                bodyThrust.Parent = rootPart
+                bodyThrust.Parent = humanoidRootPart
                 
+                -- Create BodyVelocity for control
                 local bodyVelocity = Instance.new("BodyVelocity")
+                bodyVelocity.Name = "DemonRiseVelocity"
                 bodyVelocity.MaxForce = Vector3.new(0, 500000, 0)
                 bodyVelocity.Velocity = Vector3.new(0, demonSpeed, 0)
-                bodyVelocity.Parent = rootPart
+                bodyVelocity.Parent = humanoidRootPart
                 
+                -- Wait until reach target height
                 local waitTime = 0
-                local maxWait = 5
+                local maxWaitTime = 5
                 
-                while waitTime < maxWait do
-                    local currentHeight = rootPart.Position.Y
-                    if currentHeight - startHeight >= demonHeight then
+                while waitTime < maxWaitTime do
+                    local currentHeight = humanoidRootPart.Position.Y
+                    local heightGained = currentHeight - startHeight
+                    
+                    if heightGained >= demonHeight then
                         break
                     end
+                    
                     task.wait(0.1)
                     waitTime = waitTime + 0.1
                 end
                 
-                pcall(function() bodyThrust:Destroy() end)
-                pcall(function() bodyVelocity:Destroy() end)
+                -- Remove forces
+                if bodyThrust then
+                    bodyThrust:Destroy()
+                end
+                if bodyVelocity then
+                    bodyVelocity:Destroy()
+                end
                 
-                local finalHeight = rootPart.Position.Y
-                Success("Demon Mode", string.format("Naik %.1f meter", finalHeight - startHeight), 2)
+                local finalHeight = humanoidRootPart.Position.Y
+                local heightGained = finalHeight - startHeight
+                
+                Success("Demon Mode", string.format("Lifted %.1f meters (target: %.1fm)", heightGained, demonHeight), 3)
             end
         end
         
-        isActive = false
+        isLagActive = false
     end
     
+    -- ==================== TOGGLE LAG SWITCH ====================
     local function toggle()
-        if not enabled then 
-            Warning("Lag Switch", "Aktifkan toggle terlebih dahulu", 2)
-            return 
+        if not enabled then
+            Warning("Lag Switch", "Enable the toggle first!", 2)
+            return
         end
-        if isActive then return end
         
-        isActive = true
+        if isLagActive then
+            Warning("Lag Switch", "Already active, please wait!", 1)
+            return
+        end
         
-        if mode == "Normal" then
+        isLagActive = true
+        
+        if lagMode == "Normal" then
             task.spawn(function()
-                performNormalLag()
-                isActive = false
+                performMathLag()
+                isLagActive = false
             end)
-            Success("Lag Switch", "Normal mode triggered", 1)
-        else
+            Success("Lag Switch", "Normal lag triggered (" .. lagDelay .. "s)", 1)
+        elseif lagMode == "Demon" then
             task.spawn(function()
                 performDemonLag()
-                isActive = false
+                -- isLagActive = false (handled in performDemonLag)
             end)
-            Success("Lag Switch", "Demon mode triggered", 1)
+            Info("Lag Switch", "Demon mode activated!", 1)
         end
     end
     
+    -- ==================== PUBLIC FUNCTIONS ====================
     local function setEnabled(state)
         enabled = state
         if state then
-            Info("Lag Switch", "Enabled", 1)
+            Info("Lag Switch", "Enabled (Mode: " .. lagMode .. ")", 1)
         else
             Info("Lag Switch", "Disabled", 1)
         end
     end
     
-    local function setMode(newMode)
-        mode = newMode
-        Info("Lag Switch", "Mode: " .. newMode, 1)
+    local function setMode(mode)
+        lagMode = mode
+        Info("Lag Switch", "Mode changed to: " .. mode, 1)
     end
     
-    local function setDelay(value)
-        local num = tonumber(value)
+    local function setDelay(delay)
+        local num = tonumber(delay)
         if num and num > 0 and num <= 5 then
-            delay = num
-            Info("Lag Switch", "Delay: " .. delay .. "s", 1)
+            lagDelay = num
+            Success("Lag Delay", "Set to: " .. num .. "s", 1)
+            return true
+        else
+            Error("Lag Delay", "Value must be between 0.01 and 5", 2)
+            return false
         end
     end
     
-    local function setIntensity(value)
-        local num = tonumber(value)
+    local function setIntensity(intensity)
+        local num = tonumber(intensity)
         if num and num >= 1000 and num <= 10000000 then
-            intensity = num
+            lagIntensity = num
+            Success("Lag Intensity", "Set to: " .. num, 1)
+            return true
+        else
+            Error("Lag Intensity", "Value must be between 1000 and 10000000", 2)
+            return false
         end
     end
     
-    local function setDemonHeight(value)
-        local num = tonumber(value)
+    local function setDemonHeight(height)
+        local num = tonumber(height)
         if num and num >= 10 and num <= 500 then
             demonHeight = num
+            Success("Demon Height", "Set to: " .. num .. " meters", 1)
+            return true
+        else
+            Error("Demon Height", "Value must be between 10 and 500", 2)
+            return false
         end
     end
     
-    local function setDemonSpeed(value)
-        local num = tonumber(value)
+    local function setDemonSpeed(speed)
+        local num = tonumber(speed)
         if num and num >= 20 and num <= 200 then
             demonSpeed = num
+            Success("Demon Speed", "Set to: " .. num, 1)
+            return true
+        else
+            Error("Demon Speed", "Value must be between 20 and 200", 2)
+            return false
         end
-    end
-    
-    local function setKeybind(newKey)
-        keybind = newKey
-        Info("Lag Switch", "Keybind: " .. newKey, 1)
-    end
-    
-    local function getStatus()
-        return string.format(
-            "Enabled: %s\nMode: %s\nDelay: %.1fs\nIntensity: %d\nKey: %s",
-            enabled and "✅" or "❌",
-            mode,
-            delay,
-            intensity,
-            keybind
-        )
     end
     
     return {
-        toggle = toggle,
-        setEnabled = setEnabled,
-        setMode = setMode,
-        isEnabled = function() return enabled end,
-        
-        setDelay = setDelay,
-        setIntensity = setIntensity,
-        setDemonHeight = setDemonHeight,
-        setDemonSpeed = setDemonSpeed,
-        setKeybind = setKeybind,
-        
-        getStatus = getStatus,
+        Toggle = toggle,
+        SetEnabled = setEnabled,
+        SetMode = setMode,
+        SetDelay = setDelay,
+        SetIntensity = setIntensity,
+        SetDemonHeight = setDemonHeight,
+        SetDemonSpeed = setDemonSpeed,
+        IsEnabled = function() return enabled end,
+        GetMode = function() return lagMode end,
+        GetStatus = function()
+            return string.format(
+                "Enabled: %s\nMode: %s\nDelay: %.2fs\nIntensity: %d\nDemon Height: %dm\nDemon Speed: %d",
+                enabled and "✅" or "❌",
+                lagMode,
+                lagDelay,
+                lagIntensity,
+                demonHeight,
+                demonSpeed
+            )
+        end
     }
 end)()
 
@@ -3516,6 +4601,8 @@ local Tabs = {
     ESP = Window:AddTab("ESP", "scan-eye"),
     Movement = Window:AddTab("Movement", "activity"),
     Visual = Window:AddTab("Visual", "eye"),
+    AutoFarm = Window:AddTab("Auto Farm", "zap"),
+    PlayerSettings = Window:AddTab("Player Settings", "user"),
     Server = Window:AddTab("Server", "server"),
     ["UI Settings"] = Window:AddTab("UI Settings", "settings"),
 }
@@ -3576,31 +4663,96 @@ end)
 
 CombatLeft:AddDivider()
 
-CombatLeft:AddDropdown("FastReviveMethod", {
-    Values = { "Auto", "Interact" },
-    Default = "Interact",
-    Text = "Fast Revive Method",
-    Tooltip = "Auto: Auto revive in range | Interact: Press E",
-    Callback = function(Value)
-        FastReviveModule.SetMethod(Value)
-    end
-})
-
-CombatLeft:AddToggle("FastRevive", {
-    Text = "Fast Revive",
-    Tooltip = "Quickly revive downed players",
+-- INSTANT REVIVE TOGGLE
+CombatLeft:AddToggle("InstantRevive", {
+    Text = "Instant Revive",
+    Tooltip = "Automatically revive downed players in range",
     Default = false,
 })
 
-Toggles.FastRevive:OnChanged(function()
-    if Toggles.FastRevive.Value then
-        FastReviveModule.Start()
-        Success("Fast Revive", "Activated", 2)
+Toggles.InstantRevive:OnChanged(function()
+    if Toggles.InstantRevive.Value then
+        InstantReviveModule.Start()
     else
-        FastReviveModule.Stop()
-        Info("Fast Revive", "Disabled", 2)
+        InstantReviveModule.Stop()
     end
 end)
+
+-- REVIVE WHILE EMOTING
+CombatLeft:AddToggle("ReviveWhileEmoting", {
+    Text = "Revive While Emoting",
+    Tooltip = "Continue reviving even when emoting",
+    Default = false,
+})
+
+Toggles.ReviveWhileEmoting:OnChanged(function()
+    InstantReviveModule.SetReviveWhileEmoting(Toggles.ReviveWhileEmoting.Value)
+end)
+
+-- REVIVE DELAY
+CombatLeft:AddInput("ReviveDelay", {
+    Default = "0.15",
+    Numeric = true,
+    Text = "Revive Delay (seconds)",
+    Tooltip = "Lower = faster revive, but may cause lag",
+    Placeholder = "0.15",
+    Callback = function(Value)
+        local num = tonumber(Value)
+        if num and num > 0 and num <= 1 then
+            InstantReviveModule.SetDelay(num)
+        else
+            Error("Revive Delay", "Value must be between 0.01 and 1", 2)
+        end
+    end
+})
+
+-- REVIVE RANGE
+CombatLeft:AddInput("ReviveRange", {
+    Default = "10",
+    Numeric = true,
+    Text = "Revive Range (studs)",
+    Tooltip = "Distance to auto-revive players",
+    Placeholder = "10",
+    Callback = function(Value)
+        local num = tonumber(Value)
+        if num and num > 0 and num <= 100 then
+            InstantReviveModule.SetRange(num)
+        else
+            Error("Revive Range", "Value must be between 1 and 100", 2)
+        end
+    end
+})
+
+-- AUTO WHISTLE SECTION
+CombatLeft:AddDivider()
+
+CombatLeft:AddToggle("AutoWhistle", {
+    Text = "Auto Whistle",
+    Tooltip = "Automatically whistle every 1 second",
+    Default = false,
+})
+
+Toggles.AutoWhistle:OnChanged(function()
+    if Toggles.AutoWhistle.Value then
+        AutoWhistleModule.Start()
+    else
+        AutoWhistleModule.Stop()
+    end
+end)
+
+CombatLeft:AddInput("AutoWhistleDelay", {
+    Default = "1",
+    Numeric = true,
+    Text = "Whistle Delay (seconds)",
+    Tooltip = "Set delay between whistles",
+    Placeholder = "Enter seconds",
+    Callback = function(Value)
+        local num = tonumber(Value)
+        if num and num > 0 then
+            AutoWhistleModule.SetDelay(num)
+        end
+    end
+})
 
 -- WEAPON ENHANCEMENTS SECTION
 CombatRight:AddButton({
@@ -4223,15 +5375,186 @@ ESPRight3:AddButton({
 })
 
 -- ========================================================================== --
+--                            AUTO FARM TAB                                    --
+-- ========================================================================== --
+
+local AutoFarmLeft = Tabs.AutoFarm:AddLeftGroupbox("Money & Tickets", "coins")
+local AutoFarmRight = Tabs.AutoFarm:AddRightGroupbox("AFK Farm", "moon")
+
+-- AUTO FARM MONEY
+AutoFarmLeft:AddToggle("AutoFarmMoney", {
+    Text = "Auto Farm Money",
+    Tooltip = "Auto revive players to earn money (stay alive + revive = $$$)",
+    Default = false,
+})
+
+Toggles.AutoFarmMoney:OnChanged(function()
+    if Toggles.AutoFarmMoney.Value then
+        AutoFarmMoneyModule.Start()
+    else
+        AutoFarmMoneyModule.Stop()
+    end
+end)
+
+AutoFarmLeft:AddLabel("⚠️ Requires SecurityPart in workspace\nWill auto-revive downed players for money", true)
+
+AutoFarmLeft:AddDivider()
+
+-- AUTO FARM TICKETS
+AutoFarmLeft:AddToggle("AutoFarmTickets", {
+    Text = "Auto Farm Tickets",
+    Tooltip = "Automatically collect tickets from the map",
+    Default = false,
+})
+
+Toggles.AutoFarmTickets:OnChanged(function()
+    if Toggles.AutoFarmTickets.Value then
+        AutoFarmTicketsModule.Start()
+    else
+        AutoFarmTicketsModule.Stop()
+    end
+end)
+
+AutoFarmLeft:AddLabel("⚠️ Will teleport to tickets automatically\nCollects all tickets on map", true)
+
+-- AFK FARM
+AutoFarmRight:AddToggle("AFKFarm", {
+    Text = "AFK Farm",
+    Tooltip = "Stay at safe spot (SecurityPart) to avoid death",
+    Default = false,
+})
+
+Toggles.AFKFarm:OnChanged(function()
+    if Toggles.AFKFarm.Value then
+        AFKFarmModule.Start()
+    else
+        AFKFarmModule.Stop()
+    end
+end)
+
+AutoFarmRight:AddLabel("💡 Info:\n• Stays at SecurityPart\n• Prevents death while AFK\n• Perfect for idle farming", true)
+
+-- ========================================================================== --
+--                            PLAYER SETTINGS TAB                              --
+-- ========================================================================== --
+
+local PlayerLeft = Tabs.PlayerSettings:AddLeftGroupbox("Movement Settings", "activity")
+local PlayerRight = Tabs.PlayerSettings:AddRightGroupbox("View Settings", "eye")
+
+-- PLAYER SPEED
+PlayerLeft:AddInput("PlayerSpeed", {
+    Default = "1500",
+    Numeric = true,
+    Text = "Player Speed",
+    Tooltip = "Adjust player movement speed (1450-100000000)",
+    Placeholder = "Default: 1500",
+    Callback = function(Value)
+        PlayerAdjustmentsModule.SetSpeed(Value)
+    end
+})
+
+-- PLAYER JUMP POWER
+PlayerLeft:AddInput("PlayerJumpPower", {
+    Default = "3.5",
+    Numeric = true,
+    Text = "Jump Power",
+    Tooltip = "Adjust jump height (0.1-1000)",
+    Placeholder = "Default: 3.5",
+    Callback = function(Value)
+        JumpPowerModule.SetJumpPower(Value)
+    end
+})
+
+-- PLAYER JUMP CAP
+PlayerLeft:AddInput("PlayerJumpCap", {
+    Default = "1",
+    Numeric = true,
+    Text = "Jump Cap",
+    Tooltip = "Maximum jump velocity (0.1-5000000)",
+    Placeholder = "Default: 1",
+    Callback = function(Value)
+        PlayerAdjustmentsModule.SetJumpCap(Value)
+    end
+})
+
+-- PLAYER STRAFE ACCELERATION
+PlayerLeft:AddInput("PlayerStrafe", {
+    Default = "187",
+    Numeric = true,
+    Text = "Air Strafe Acceleration",
+    Tooltip = "Control movement speed in air (1-1000000000)",
+    Placeholder = "Default: 187",
+    Callback = function(Value)
+        PlayerAdjustmentsModule.SetStrafeAccel(Value)
+    end
+})
+
+PlayerLeft:AddDivider()
+
+-- APPLY METHOD
+PlayerLeft:AddDropdown("ApplyMethod", {
+    Values = { "Not Optimized", "Optimized" },
+    Default = "Not Optimized",
+    Text = "Apply Method",
+    Tooltip = "Not Optimized = instant apply | Optimized = batched apply (less lag)",
+    Callback = function(Value)
+        PlayerAdjustmentsModule.SetApplyMode(Value)
+    end
+})
+
+PlayerLeft:AddLabel("💡 Info:\n• Not Optimized = Instant changes\n• Optimized = Batched (prevents lag)", true)
+
+-- FOV ADJUSTMENT
+PlayerRight:AddInput("PlayerFOV", {
+    Default = "150",
+    Numeric = true,
+    Text = "Field of View (FOV)",
+    Tooltip = "Adjust camera FOV (1-1000)",
+    Placeholder = "Default: 150",
+    Callback = function(Value)
+        FOVModule.SetFOV(Value)
+    end
+})
+
+PlayerRight:AddLabel("⚠️ FOV Changes:\n• Only applies when you change it\n• Rejoin to reset to default\n• Higher = wider view", true)
+
+PlayerRight:AddDivider()
+
+-- FOV PRESETS
+PlayerRight:AddDropdown("FOVPresets", {
+    Values = { "100 FOV (150)", "110 FOV (200)", "120 FOV (250)", "130 FOV (300)", "140 FOV (350)", "150 FOV (400)" },
+    Default = "100 FOV (150)",
+    Text = "FOV Presets",
+    Tooltip = "Quick FOV presets",
+    Callback = function(Value)
+        local fovMap = {
+            ["100 FOV (150)"] = 150,
+            ["110 FOV (200)"] = 200,
+            ["120 FOV (250)"] = 250,
+            ["130 FOV (300)"] = 300,
+            ["140 FOV (350)"] = 350,
+            ["150 FOV (400)"] = 400
+        }
+        
+        local fovValue = fovMap[Value]
+        if fovValue then
+            FOVModule.SetFOV(fovValue)
+        end
+    end
+})
+
+PlayerRight:AddLabel("Quick presets for common FOV values", true)
+
+-- ========================================================================== --
 --                            MOVEMENT TAB                                     --
 -- ========================================================================== --
 
 local MovementLeft = Tabs.Movement:AddLeftGroupbox("Basic Movement", "activity")
-local MovementLeft2 = Tabs.Movement:AddLeftGroupbox("Fly System", "plane")
+local MovementLeft2 = Tabs.Movement:AddLeftGroupbox("Advanced Jump", "rabbit")
 local MovementRight = Tabs.Movement:AddRightGroupbox("Infinite Slide", "zap")
-local MovementRight2 = Tabs.Movement:AddRightGroupbox("Bunny Hop", "rabbit")
+local MovementRight2 = Tabs.Movement:AddRightGroupbox("Modifications", "settings")
 
--- BASIC MOVEMENT
+-- NOCLIP
 MovementLeft:AddToggle("Noclip", {
     Text = "Noclip",
     Tooltip = "Walk through walls and objects",
@@ -4246,6 +5569,7 @@ Toggles.Noclip:OnChanged(function()
     end
 end)
 
+-- BUG EMOTE
 MovementLeft:AddToggle("BugEmote", {
     Text = "Bug Emote (Force Sit)",
     Tooltip = "Force your character to sit",
@@ -4260,8 +5584,10 @@ Toggles.BugEmote:OnChanged(function()
     end
 end)
 
+MovementLeft:AddDivider()
+
 -- FLY SYSTEM
-MovementLeft2:AddToggle("FlyActivate", {
+MovementLeft:AddToggle("FlyActivate", {
     Text = "Activate Fly",
     Tooltip = "Enable/disable flying mode (WASD + Space/Shift)",
     Default = false,
@@ -4271,7 +5597,7 @@ Toggles.FlyActivate:OnChanged(function()
     FlyModule.Toggle(Toggles.FlyActivate.Value)
 end)
 
-MovementLeft2:AddInput("FlySpeed", {
+MovementLeft:AddInput("FlySpeed", {
     Default = "50",
     Numeric = true,
     Text = "Fly Speed",
@@ -4285,7 +5611,7 @@ MovementLeft2:AddInput("FlySpeed", {
     end
 })
 
-MovementLeft2:AddButton({
+MovementLeft:AddButton({
     Text = "Reset Fly",
     Tooltip = "Force stop fly if stuck",
     Func = function()
@@ -4294,65 +5620,174 @@ MovementLeft2:AddButton({
     end
 })
 
-MovementLeft2:AddLabel("Controls:\nWASD = Move\nSpace = Up\nShift = Down\nCamera = Direction", true)
+MovementLeft:AddLabel("Controls:\nWASD = Move\nSpace = Up\nShift = Down\nCamera = Direction", true)
 
--- INFINITE SLIDE
-MovementRight:AddToggle("InfiniteSlide", {
-    Text = "Infinite Slide",
-    Tooltip = "Slide tanpa batas (hold Shift saat lari)",
-    Default = false,
-})
-
-Toggles.InfiniteSlide:OnChanged(function()
-    MovementFeaturesModule.ToggleInfiniteSlide(Toggles.InfiniteSlide.Value)
-end)
-
-MovementRight:AddInput("SlideSpeed", {
-    Default = "-8",
-    Numeric = false,
-    Text = "Slide Speed",
-    Tooltip = "Nilai negatif = akselerasi (contoh: -8)",
-    Placeholder = "Masukkan nilai",
+-- AUTO JUMP TYPE
+MovementLeft2:AddDropdown("AutoJumpType", {
+    Values = { "Bounce", "Realistic" },
+    Default = "Bounce",
+    Text = "Auto Jump Type",
+    Tooltip = "Bounce = fast jump | Realistic = realistic jump",
     Callback = function(Value)
-        MovementFeaturesModule.SetSlideSpeed(Value)
+        AutoJumpModule.SetAutoJumpType(Value)
     end
 })
 
-MovementRight:AddLabel("Cara Pakai:\n• Berlari (hold Shift)\n• Slide akan terus tanpa batas\n• Atur speed untuk akselerasi", true)
+-- ROTATION 360°
+MovementLeft2:AddToggle("Rotation360", {
+    Text = "Rotation 360°",
+    Tooltip = "Rotate character 360° continuously (DO NOT use with emotes!)",
+    Default = false,
+})
 
--- BUNNY HOP
-MovementRight2:AddToggle("BunnyHop", {
+Toggles.Rotation360:OnChanged(function()
+    AutoJumpModule.ToggleRotation(Toggles.Rotation360.Value)
+end)
+
+-- BUNNY HOP TOGGLE
+MovementLeft2:AddToggle("BunnyHop", {
     Text = "Bunny Hop",
-    Tooltip = "Lompat otomatis saat berlari",
+    Tooltip = "Auto jump continuously",
     Default = false,
 })
 
 Toggles.BunnyHop:OnChanged(function()
-    MovementFeaturesModule.ToggleBhop(Toggles.BunnyHop.Value)
+    if Toggles.BunnyHop.Value then
+        AutoJumpModule.Start()
+    else
+        AutoJumpModule.Stop()
+    end
 end)
 
-MovementRight2:AddDropdown("BhopMode", {
-    Values = { "Bounce", "Realistic" },
-    Default = "Bounce",
+-- BHOP HOLD
+MovementLeft2:AddToggle("BhopHold", {
+    Text = "Bhop Hold (Hold Space)",
+    Tooltip = "Enable bhop only when holding Space",
+    Default = false,
+})
+
+Toggles.BhopHold:OnChanged(function()
+    AutoJumpModule.SetHoldEnabled(Toggles.BhopHold.Value)
+end)
+
+-- BHOP MODE
+MovementLeft2:AddDropdown("BhopMode", {
+    Values = { "Acceleration", "No Acceleration" },
+    Default = "Acceleration",
     Text = "Bhop Mode",
-    Tooltip = "Pilih mode lompat",
+    Tooltip = "Acceleration = slide effect | No Acceleration = normal",
     Callback = function(Value)
-        MovementFeaturesModule.SetBhopMode(Value)
+        AutoJumpModule.SetBhopMode(Value)
     end
 })
 
-MovementRight2:AddInput("JumpCooldown", {
+-- BHOP ACCELERATION
+MovementLeft2:AddInput("BhopAccel", {
+    Default = "-0.5",
+    Numeric = true,
+    Text = "Bhop Acceleration",
+    Tooltip = "Negative value for slide effect (e.g., -0.5)",
+    Placeholder = "-0.5",
+    Callback = function(Value)
+        AutoJumpModule.SetBhopAccel(Value)
+    end
+})
+
+-- JUMP COOLDOWN
+MovementLeft2:AddInput("JumpCooldown", {
     Default = "0.7",
-    Numeric = false,
-    Text = "Jump Cooldown",
-    Tooltip = "Jeda antar lompatan (detik)",
-    Placeholder = "Contoh: 0.7",
+    Numeric = true,
+    Text = "Jump Cooldown (seconds)",
+    Tooltip = "Delay between jumps",
+    Placeholder = "0.7",
     Callback = function(Value)
-        MovementFeaturesModule.SetJumpCooldown(Value)
+        AutoJumpModule.SetJumpCooldown(Value)
     end
 })
 
-MovementRight2:AddLabel("Cara Pakai:\n• Aktifkan toggle\n• Berlari (hold Shift)\n• Hold Space untuk temporary Bhop\n• Mode Bounce = cepat\n• Realistic = mirip human", true)
+-- INFINITE SLIDE
+MovementRight:AddToggle("InfiniteSlide", {
+    Text = "Infinite Slide",
+    Tooltip = "Slide infinitely (hold Shift while running)",
+    Default = false,
+})
+
+Toggles.InfiniteSlide:OnChanged(function()
+    if Toggles.InfiniteSlide.Value then
+        InfiniteSlideModule.Start()
+    else
+        InfiniteSlideModule.Stop()
+    end
+end)
+
+MovementRight:AddInput("SlideSpeed", {
+    Default = "-8",
+    Numeric = true,
+    Text = "Slide Speed",
+    Tooltip = "Negative value = acceleration (e.g., -8)",
+    Placeholder = "-8",
+    Callback = function(Value)
+        InfiniteSlideModule.SetSlideSpeed(Value)
+    end
+})
+
+MovementRight:AddLabel("How to use:\n• Run (hold Shift)\n• Slide will continue infinitely\n• Adjust speed for acceleration", true)
+
+-- BOUNCE MODIFICATION
+MovementRight2:AddToggle("BounceModify", {
+    Text = "Modify Bounce",
+    Tooltip = "Modify player bounce speed",
+    Default = false,
+})
+
+Toggles.BounceModify:OnChanged(function()
+    if Toggles.BounceModify.Value then
+        BounceModule.Start()
+    else
+        BounceModule.Stop()
+    end
+end)
+
+MovementRight2:AddInput("BounceSpeed", {
+    Default = "110",
+    Numeric = true,
+    Text = "Bounce Speed",
+    Tooltip = "Player bounce walk speed (0-1000)",
+    Placeholder = "110",
+    Callback = function(Value)
+        BounceModule.SetSpeed(Value)
+    end
+})
+
+MovementRight2:AddDivider()
+
+-- GRAVITY SYSTEM
+MovementRight2:AddToggle("Gravity", {
+    Text = "Gravity",
+    Tooltip = "Modify workspace gravity",
+    Default = false,
+})
+
+Toggles.Gravity:OnChanged(function()
+    if Toggles.Gravity.Value then
+        GravityModule.Start()
+    else
+        GravityModule.Stop()
+    end
+end)
+
+MovementRight2:AddInput("GravityValue", {
+    Default = "10",
+    Numeric = true,
+    Text = "Gravity Value",
+    Tooltip = "Lower = slower fall (1-200)",
+    Placeholder = "10",
+    Callback = function(Value)
+        GravityModule.SetGravity(Value)
+    end
+})
+
+MovementRight2:AddLabel("💡 Lower gravity = slower fall\nDefault gravity: " .. GravityModule.GetOriginalGravity(), true)
 
 -- ========================================================================== --
 --                            VISUAL TAB                                       --
@@ -4360,11 +5795,10 @@ MovementRight2:AddLabel("Cara Pakai:\n• Aktifkan toggle\n• Berlari (hold Shi
 
 local VisualLeft = Tabs.Visual:AddLeftGroupbox("Barriers", "shield")
 local VisualLeft2 = Tabs.Visual:AddLeftGroupbox("Lighting & Atmosphere", "sun")
-local VisualRight = Tabs.Visual:AddRightGroupbox("Camera & FOV", "camera")
+local VisualRight = Tabs.Visual:AddRightGroupbox("Camera & Effects", "camera")
 local VisualRight2 = Tabs.Visual:AddRightGroupbox("Optimization", "zap")
-local VisualRight3 = Tabs.Visual:AddRightGroupbox("Player Visual", "user")
 
--- BARRIERS
+-- ==================== BARRIERS ====================
 VisualLeft:AddToggle("RemoveBarriers", {
     Text = "Remove Barriers",
     Tooltip = "Disable collision on invisible barriers",
@@ -4425,7 +5859,7 @@ VisualLeft:AddDropdown("BarriersColor", {
     Values = { "Merah", "Biru", "Hijau", "Kuning", "Ungu", "Pink", "Cyan", "Oranye", "Putih", "Hitam" },
     Default = "Merah",
     Text = "Barriers Color",
-    Tooltip = "Pilih warna untuk barriers",
+    Tooltip = "Choose color for barriers",
     Callback = function(Value)
         local colors = {
             Merah  = Color3.fromRGB(255, 0,   0),
@@ -4459,23 +5893,23 @@ VisualLeft:AddDropdown("BarriersTransparency", {
     },
     Default = "1 - Solid (0%)",
     Text = "Transparency",
-    Tooltip = "Pilih tingkat transparansi",
+    Tooltip = "Choose transparency level",
     Callback = function(Value)
         local level = tonumber(Value:match("%d+"))
         if level then
             BarriersVisibleModule.SetTransparencyLevel(level)
             if BarriersVisibleModule.IsEnabled() then
                 local percent = Value:match("%((%d+)%%%)")
-                Success("Transparency", "Barriers: " .. percent .. "% transparan", 1)
+                Success("Transparency", "Barriers: " .. percent .. "% transparent", 1)
             end
         end
     end
 })
 
--- LIGHTING
+-- ==================== LIGHTING ====================
 VisualLeft2:AddToggle("FullBright", {
     Text = "Full Bright",
-    Tooltip = "Maksimalkan pencahayaan game",
+    Tooltip = "Maximize game lighting",
     Default = false,
 })
 
@@ -4485,7 +5919,7 @@ end)
 
 VisualLeft2:AddToggle("RemoveFog", {
     Text = "Remove Fog",
-    Tooltip = "Hilangkan efek fog/kabut",
+    Tooltip = "Remove fog/atmosphere effects",
     Default = false,
 })
 
@@ -4493,10 +5927,12 @@ Toggles.RemoveFog:OnChanged(function()
     VisualFeaturesModule.ToggleRemoveFog(Toggles.RemoveFog.Value)
 end)
 
--- CAMERA & FOV
+VisualLeft2:AddLabel("💡 Full Bright = Maximum brightness\nRemove Fog = Clear visibility", true)
+
+-- ==================== CAMERA & EFFECTS ====================
 VisualRight:AddToggle("CameraStretch", {
     Text = "Camera Stretch",
-    Tooltip = "Regangkan tampilan kamera",
+    Tooltip = "Stretch camera view",
     Default = false,
 })
 
@@ -4506,10 +5942,10 @@ end)
 
 VisualRight:AddInput("StretchH", {
     Default = "0.8",
-    Numeric = false,
+    Numeric = true,
     Text = "Stretch Horizontal",
-    Tooltip = "Nilai stretch horizontal (0.1 - 2.0)",
-    Placeholder = "Contoh: 0.8",
+    Tooltip = "Horizontal stretch value (0.1 - 2.0)",
+    Placeholder = "0.8",
     Callback = function(Value)
         VisualFeaturesModule.SetStretchH(Value)
     end
@@ -4517,10 +5953,10 @@ VisualRight:AddInput("StretchH", {
 
 VisualRight:AddInput("StretchV", {
     Default = "0.8",
-    Numeric = false,
+    Numeric = true,
     Text = "Stretch Vertical",
-    Tooltip = "Nilai stretch vertical (0.1 - 2.0)",
-    Placeholder = "Contoh: 0.8",
+    Tooltip = "Vertical stretch value (0.1 - 2.0)",
+    Placeholder = "0.8",
     Callback = function(Value)
         VisualFeaturesModule.SetStretchV(Value)
     end
@@ -4528,39 +5964,32 @@ VisualRight:AddInput("StretchV", {
 
 VisualRight:AddDivider()
 
-VisualRight:AddDropdown("FOVPresets", {
-    Values = { "100 FOV", "110 FOV", "120 FOV", "130 FOV", "140 FOV", "150 FOV" },
-    Default = "100 FOV",
-    Text = "FOV Presets",
-    Tooltip = "Pilih FOV (langsung work)",
+-- FAKE STREAK
+VisualRight:AddInput("FakeStreak", {
+    Default = "",
+    Numeric = true,
+    Text = "Fake Streak",
+    Tooltip = "Fake your streak value (visual only)",
+    Placeholder = "Enter streak number",
     Callback = function(Value)
-        local inputValue = 150
-        
-        if Value == "100 FOV" then
-            inputValue = 150
-        elseif Value == "110 FOV" then
-            inputValue = 200
-        elseif Value == "120 FOV" then
-            inputValue = 250
-        elseif Value == "130 FOV" then
-            inputValue = 300
-        elseif Value == "140 FOV" then
-            inputValue = 350
-        elseif Value == "150 FOV" then
-            inputValue = 400
-        end
-        
-        game:GetService("ReplicatedStorage").Events.Data.ChangeSetting:InvokeServer(2, inputValue)
-        Success("FOV", "Changed to " .. Value, 2)
+        VisualFeaturesModule.SetFakeStreak(Value)
     end
 })
 
-VisualRight:AddLabel("⚠️ FOV hanya berubah saat DIPILIH\n• Execute ulang script TIDAK mengubah FOV\n• WAJIB REJOIN agar stabil", true)
+VisualRight:AddButton({
+    Text = "Reset Streak",
+    Tooltip = "Remove fake streak and return to normal",
+    Func = function()
+        VisualFeaturesModule.ResetStreak()
+    end
+})
 
--- OPTIMIZATION
+VisualRight:AddLabel("⚠️ Fake streak is visual only\nDoes not affect actual gameplay", true)
+
+-- ==================== OPTIMIZATION ====================
 VisualRight2:AddButton({
     Text = "Anti Lag 1 - Light",
-    Tooltip = "Optimasi ringan (shadows, fog, material)",
+    Tooltip = "Light optimization (shadows, fog, materials)",
     Func = function()
         VisualFeaturesModule.AntiLag1()
     end
@@ -4568,7 +5997,7 @@ VisualRight2:AddButton({
 
 VisualRight2:AddButton({
     Text = "Anti Lag 2 - Aggressive",
-    Tooltip = "Optimasi agresif (textures, effects, particles)",
+    Tooltip = "Aggressive optimization (textures, effects, particles)",
     Func = function()
         VisualFeaturesModule.AntiLag2()
     end
@@ -4576,31 +6005,15 @@ VisualRight2:AddButton({
 
 VisualRight2:AddButton({
     Text = "Anti Lag 3 - Textures",
-    Tooltip = "Fokus penghapusan texture dan decal",
+    Tooltip = "Focus on removing textures and decals",
     Func = function()
         VisualFeaturesModule.AntiLag3()
     end
 })
 
--- PLAYER VISUAL
-VisualRight3:AddInput("FakeStreak", {
-    Default = "",
-    Numeric = true,
-    Text = "Fake Streak",
-    Tooltip = "Palsukan nilai streak player (visual only)",
-    Placeholder = "Masukkan angka streak",
-    Callback = function(Value)
-        VisualFeaturesModule.SetFakeStreak(Value)
-    end
-})
+VisualRight2:AddLabel("💡 Anti Lag Info:\n• Level 1 = Light (safe)\n• Level 2 = Aggressive (max FPS)\n• Level 3 = Textures only", true)
 
-VisualRight3:AddButton({
-    Text = "Reset Streak",
-    Tooltip = "Hapus fake streak kembali ke normal",
-    Func = function()
-        VisualFeaturesModule.ResetStreak()
-    end
-})
+VisualRight2:AddLabel("⚠️ Warning:\nAnti Lag cannot be undone!\nYou must rejoin to restore visuals", true)
 
 -- ========================================================================== --
 --                            SERVER TAB                                       --
@@ -4807,68 +6220,70 @@ ServerRight:AddButton({
     end
 })
 
--- MISC FEATURES
+-- ==================== LAG SWITCH ====================
 ServerRight2:AddToggle("LagSwitchEnable", {
     Text = "Enable Lag Switch",
-    Tooltip = "Aktifkan fitur lag switch",
+    Tooltip = "Enable lag switch system",
     Default = false,
 })
 
 Toggles.LagSwitchEnable:OnChanged(function()
-    LagSwitchModule.setEnabled(Toggles.LagSwitchEnable.Value)
+    LagSwitchModule.SetEnabled(Toggles.LagSwitchEnable.Value)
 end)
 
 ServerRight2:AddDropdown("LagSwitchMode", {
     Values = { "Normal", "Demon" },
     Default = "Normal",
     Text = "Lag Switch Mode",
-    Tooltip = "Normal = lag biasa | Demon = lag + naik",
+    Tooltip = "Normal = lag only | Demon = lag + rise to sky",
     Callback = function(Value)
-        LagSwitchModule.setMode(Value)
+        LagSwitchModule.SetMode(Value)
     end
 })
 
-ServerRight2:AddInput("LagSwitchDelay", {
+ServerRight2:AddInput("LagDelay", {
     Default = "0.1",
-    Numeric = false,
-    Text = "Delay (seconds)",
-    Tooltip = "Durasi lag (0.1 - 5 detik)",
-    Placeholder = "Contoh: 0.1",
+    Numeric = true,
+    Text = "Lag Delay (seconds)",
+    Tooltip = "Duration of lag (0.01-5 seconds)",
+    Placeholder = "0.1",
     Callback = function(Value)
-        LagSwitchModule.setDelay(Value)
+        LagSwitchModule.SetDelay(Value)
     end
 })
 
-ServerRight2:AddInput("LagSwitchIntensity", {
+ServerRight2:AddInput("LagIntensity", {
     Default = "1000000",
     Numeric = true,
-    Text = "Intensity",
-    Tooltip = "Kekuatan lag (1000 - 10.000.000)",
-    Placeholder = "Contoh: 1000000",
+    Text = "Lag Intensity",
+    Tooltip = "Calculation intensity (1000-10000000)",
+    Placeholder = "1000000",
     Callback = function(Value)
-        LagSwitchModule.setIntensity(Value)
+        LagSwitchModule.SetIntensity(Value)
     end
 })
 
-ServerRight2:AddInput("LagSwitchDemonHeight", {
+ServerRight2:AddDivider()
+
+ServerRight2:AddInput("DemonHeight", {
     Default = "10",
     Numeric = true,
-    Text = "Demon Height (m)",
-    Tooltip = "Tinggi naik (10-500m)",
-    Placeholder = "Contoh: 10",
+    Text = "Demon Rise Height (meters)",
+    Tooltip = "How high to rise in Demon mode (10-500m)",
+    Placeholder = "10",
     Callback = function(Value)
-        LagSwitchModule.setDemonHeight(Value)
+        LagSwitchModule.SetDemonHeight(Value)
     end
 })
 
-ServerRight2:AddInput("LagSwitchDemonSpeed", {
+ServerRight2:AddInput("DemonSpeed", {
     Default = "80",
     Numeric = true,
-    Text = "Demon Speed",
-    Tooltip = "Kecepatan naik (20-200)",
-    Placeholder = "Contoh: 80",
+    Text = "Demon Rise Speed",
+    Tooltip = "Speed of rising in Demon mode (20-200)",
+    Placeholder = "80",
     Callback = function(Value)
-        LagSwitchModule.setDemonSpeed(Value)
+        LagSwitchModule.SetDemonSpeed(Value)
     end
 })
 
@@ -4877,11 +6292,19 @@ ServerRight2:AddLabel("Lag Switch Trigger"):AddKeyPicker("LagSwitchKey", {
     Text = "Trigger Key",
     Mode = "Press",
     Callback = function()
-        if LagSwitchModule.isEnabled() then
-            LagSwitchModule.toggle()
+        if LagSwitchModule.IsEnabled() then
+            LagSwitchModule.Toggle()
+        else
+            Warning("Lag Switch", "Enable the toggle first!", 2)
         end
     end
 })
+
+ServerRight2:AddLabel("💡 Normal Mode:\n• Creates lag via math calculations\n• Good for quick lag spikes", true)
+
+ServerRight2:AddLabel("💡 Demon Mode:\n• Creates lag + rises to sky\n• Adjustable height & speed\n• Perfect for escaping", true)
+
+ServerRight2:AddLabel("⚠️ Warning:\n• Don't spam (may crash)\n• Use responsibly", true)
 
 ServerRight2:AddDivider()
 
@@ -5061,17 +6484,95 @@ end)
 Library:OnUnload(function()
     print("rzprivate - Evade unloaded!")
     
-    if AutoSelfReviveModule.IsEnabled() then AutoSelfReviveModule.Stop() end
-    if FastReviveModule.IsEnabled() then FastReviveModule.Stop() end
-    if NoclipModule.IsEnabled() then NoclipModule.Stop() end
-    if BugEmoteModule.IsEnabled() then BugEmoteModule.Stop() end
-    if RemoveBarriersModule.IsEnabled() then RemoveBarriersModule.Stop() end
-    if BarriersVisibleModule.IsEnabled() then BarriersVisibleModule.Stop() end
-    if FlyModule.IsFlying() then FlyModule.Stop() end
-    if MovementFeaturesModule.IsInfiniteSlideEnabled() then MovementFeaturesModule.ToggleInfiniteSlide(false) end
-    if MovementFeaturesModule.IsBhopEnabled() then MovementFeaturesModule.ToggleBhop(false) end
-    if ESP_System.Running then ESP_System:Stop() end
+    -- ==================== COMBAT MODULES ====================
+    if AutoSelfReviveModule.IsEnabled() then 
+        AutoSelfReviveModule.Stop() 
+    end
     
+    if InstantReviveModule.IsEnabled() then 
+        InstantReviveModule.Stop() 
+    end
+    
+    if AutoWhistleModule and AutoWhistleModule.IsEnabled() then 
+        AutoWhistleModule.Stop() 
+    end
+    
+    -- ==================== MOVEMENT MODULES ====================
+    if NoclipModule.IsEnabled() then 
+        NoclipModule.Stop() 
+    end
+    
+    if BugEmoteModule.IsEnabled() then 
+        BugEmoteModule.Stop() 
+    end
+    
+    if FlyModule.IsFlying() then 
+        FlyModule.Stop() 
+    end
+    
+    if AutoJumpModule and AutoJumpModule.IsEnabled() then 
+        AutoJumpModule.Stop() 
+    end
+    
+    if InfiniteSlideModule and InfiniteSlideModule.IsEnabled() then 
+        InfiniteSlideModule.Stop() 
+    end
+    
+    if BounceModule and BounceModule.IsEnabled() then 
+        BounceModule.Stop() 
+    end
+    
+    if GravityModule and GravityModule.IsEnabled() then 
+        GravityModule.Stop() 
+    end
+    
+    -- ==================== VISUAL MODULES ====================
+    if RemoveBarriersModule.IsEnabled() then 
+        RemoveBarriersModule.Stop() 
+    end
+    
+    if BarriersVisibleModule.IsEnabled() then 
+        BarriersVisibleModule.Stop() 
+    end
+    
+    if VisualFeaturesModule then
+        if VisualFeaturesModule.IsStretchEnabled() then
+            VisualFeaturesModule.ToggleCameraStretch(false)
+        end
+        
+        if VisualFeaturesModule.IsFullBright() then
+            VisualFeaturesModule.ToggleFullBright(false)
+        end
+        
+        if VisualFeaturesModule.IsRemoveFog() then
+            VisualFeaturesModule.ToggleRemoveFog(false)
+        end
+    end
+    
+    -- ==================== AUTO FARM MODULES ====================
+    if AutoFarmMoneyModule and AutoFarmMoneyModule.IsEnabled() then 
+        AutoFarmMoneyModule.Stop() 
+    end
+    
+    if AutoFarmTicketsModule and AutoFarmTicketsModule.IsEnabled() then 
+        AutoFarmTicketsModule.Stop() 
+    end
+    
+    if AFKFarmModule and AFKFarmModule.IsEnabled() then 
+        AFKFarmModule.Stop() 
+    end
+    
+    -- ==================== PLAYER SETTINGS ====================
+    if JumpPowerModule and JumpPowerModule.Cleanup then
+        JumpPowerModule.Cleanup()
+    end
+    
+    -- ==================== ESP SYSTEM ====================
+    if ESP_System and ESP_System.Running then 
+        ESP_System:Stop() 
+    end
+    
+    -- ==================== UI CLEANUP ====================
     if screenGui and screenGui.Parent then
         screenGui:Destroy()
     end
@@ -5079,21 +6580,9 @@ Library:OnUnload(function()
     pcall(function()
         StarterGui:SetCore("TopbarEnabled", true)
     end)
+    
+    -- ==================== FINAL MESSAGE ====================
+    print("✅ All modules stopped successfully!")
+    print("✅ UI cleaned up!")
+    print("✅ Script unloaded!")
 end)
-
-task.delay(3, function()
-    isScriptLoading = false
-    Library:Notify({
-        Title = "✅ rzprivate - Evade",
-        Description = "Script loaded successfully!\nVersion 3.0 by iruz",
-        Time = 5,
-    })
-end)
-
-SaveManager:LoadAutoloadConfig()
-
-print(string.rep("=", 70))
-print("rzprivate - Evade (Obsidian Version) v3.0")
-print("by iruz | Key: iruzruz")
-print("Features: Combat | Teleport | ESP | Movement | Visual | Server")
-print(string.rep("=", 70))
