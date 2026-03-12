@@ -4590,7 +4590,6 @@ end)
 local Window = Library:CreateWindow({
     Title = "rzprivate - Evade",
     Footer = "by iruz | version 3.0",
-    Icon = 95816097006870,
     NotifySide = "Right",
     ShowCustomCursor = true,
 })
@@ -6479,7 +6478,15 @@ end)
 
 -- ========================================================================== --
 --                            FINAL SETUP & LOAD                              --
--- ========================================================================== --
+-- ========================================================================== -- 
+task.delay(2, function()                                          
+    isScriptLoading = false                                       
+    Library:Notify({                                              
+        Title = "✅ rzprivate - Evade",                           
+        Description = "Script loaded successfully! All features ready.", 
+        Time = 5,                                                 
+    })                                                            
+end)                                                              
 
 Library:OnUnload(function()
     print("rzprivate - Evade unloaded!")
