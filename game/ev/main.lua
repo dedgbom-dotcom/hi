@@ -40,9 +40,10 @@ local Toggles = Library.Toggles
 -- ========================================================================== --
 
 local isScriptLoading = true
+local notificationsEnabled = true  -- ← TAMBAH INI (default ON)
 
 local function Success(title, message, duration)
-    if isScriptLoading then return end
+    if isScriptLoading or not notificationsEnabled then return end  -- ← UPDATE
     Library:Notify({
         Title = title,
         Description = message,
@@ -51,7 +52,7 @@ local function Success(title, message, duration)
 end
 
 local function Error(title, message, duration)
-    if isScriptLoading then return end
+    if isScriptLoading or not notificationsEnabled then return end  -- ← UPDATE
     Library:Notify({
         Title = "❌ " .. title,
         Description = message,
@@ -60,7 +61,7 @@ local function Error(title, message, duration)
 end
 
 local function Info(title, message, duration)
-    if isScriptLoading then return end
+    if isScriptLoading or not notificationsEnabled then return end  -- ← UPDATE
     Library:Notify({
         Title = "ℹ️ " .. title,
         Description = message,
@@ -69,7 +70,7 @@ local function Info(title, message, duration)
 end
 
 local function Warning(title, message, duration)
-    if isScriptLoading then return end
+    if isScriptLoading or not notificationsEnabled then return end  -- ← UPDATE
     Library:Notify({
         Title = "⚠️ " .. title,
         Description = message,
@@ -1123,7 +1124,7 @@ local TeleportModule = (function()
     local function loadFromGitHub()
         loadError = nil
         local success, result = pcall(function()
-            print("📡 Loading Teleport Module from GitHub...")
+            print("Loading Teleport Module")
             local script = game:HttpGet(TELEPORT_MODULE_URL)
             return loadstring(script)()
         end)
@@ -1135,7 +1136,7 @@ local TeleportModule = (function()
             currentMap = detectCurrentMap()
             handleMapChange(currentMap)
             
-            print("✅ Teleport Module loaded! Maps: " .. (result.GetMapCount and result.GetMapCount() or "?"))
+            print("Teleport Module loaded! Maps: " .. (result.GetMapCount and result.GetMapCount() or "?"))
             return true
         else
             loadError = tostring(result)
@@ -2008,7 +2009,7 @@ local BarriersVisibleModule = (function()
                     end
                 end)
             end
-            Success("Barriers Visible", "Made " .. changed .. " barriers visible (" .. math.floor(barrierTransparency * 100) .. "% transparency)", 2)
+            -- Notifikasi dihapus - hanya saat Start, bukan saat update transparency
         else
             for _, obj in ipairs(invisParts:GetDescendants()) do
                 pcall(function()
@@ -2022,7 +2023,7 @@ local BarriersVisibleModule = (function()
                     end
                 end)
             end
-            Info("Barriers Visible", "Made " .. changed .. " barriers invisible", 2)
+            -- Notifikasi dihapus - hanya saat Stop
         end
         
         return changed
@@ -2061,36 +2062,40 @@ local BarriersVisibleModule = (function()
         barrierColor = color
         if enabled then
             setTransparency(true)
+            -- Notifikasi dihapus - bikin spam
         end
     end
     
-    local function setTransparencyLevel(level)
-        local transparencyMap = {
-            [1] = 0,     [2] = 0.2,   [3] = 0.4,   [4] = 0.5,   [5] = 0.6,
-            [6] = 0.7,   [7] = 0.8,   [8] = 0.85,  [9] = 0.9,   [10] = 0.95,
-        }
-        
-        barrierTransparency = transparencyMap[level] or 0
+    local function setTransparencyLevel(transparencyValue)
+        -- Terima nilai 0-1 langsung dari slider (sudah dibagi 100)
+        barrierTransparency = transparencyValue
         if enabled then
             setTransparency(true)
+            -- NOTIFIKASI DIHAPUS - INI YANG BIKIN LAG PAS DRAG SLIDER
         end
         return barrierTransparency
     end
     
+    local function start()
+        enabled = true
+        local changed = setTransparency(true)
+        setupDescendantListener()
+        Success("Barriers Visible", "Made " .. changed .. " barriers visible", 2)  -- Notif cuma pas Start aja
+    end
+    
+    local function stop()
+        enabled = false
+        local changed = setTransparency(false)
+        if descendantConnection then
+            pcall(function() descendantConnection:Disconnect() end)
+            descendantConnection = nil
+        end
+        Info("Barriers Visible", "Made " .. changed .. " barriers invisible", 2)  -- Notif cuma pas Stop aja
+    end
+    
     return {
-        Start = function()
-            enabled = true
-            setTransparency(true)
-            setupDescendantListener()
-        end,
-        Stop = function()
-            enabled = false
-            setTransparency(false)
-            if descendantConnection then
-                pcall(function() descendantConnection:Disconnect() end)
-                descendantConnection = nil
-            end
-        end,
+        Start = start,
+        Stop = stop,
         SetColor = setColor,
         SetTransparencyLevel = setTransparencyLevel,
         IsEnabled = function() return enabled end,
@@ -3159,7 +3164,143 @@ local FlyModule = (function()
     }
 end)()
 
+-- ========================================================================== --
+--                         FPS & TIMER DISPLAY MODULE                         --
+-- ========================================================================== --
 
+local FPSTimerDisplayModule = (function()
+    local enabled = false
+    local displayGui = nil
+    local updateConnection = nil
+    
+    local function start()
+        if enabled then return end
+        enabled = true
+        
+        task.spawn(function()
+            local coreGui = game:GetService("CoreGui")
+            local RunService = game:GetService("RunService")
+            
+            -- Remove old displays
+            pcall(function()
+                local oldPlayerGui = player.PlayerGui:FindFirstChild("SimpleInfoDisplay")
+                if oldPlayerGui then oldPlayerGui:Destroy() end
+            end)
+            
+            pcall(function()
+                local oldCoreGui = coreGui:FindFirstChild("SimpleInfoDisplay")
+                if oldCoreGui then oldCoreGui:Destroy() end
+            end)
+            
+            task.wait(0.2)
+            
+            -- Create GUI
+            local screenGui = Instance.new("ScreenGui")
+            screenGui.Name = "SimpleInfoDisplay"
+            screenGui.ResetOnSpawn = false
+            screenGui.IgnoreGuiInset = true
+            screenGui.DisplayOrder = 1000
+            screenGui.Parent = coreGui
+            
+            displayGui = screenGui
+            
+            local mainFrame = Instance.new("Frame")
+            mainFrame.Name = "MainFrame"
+            mainFrame.Parent = screenGui
+            mainFrame.BackgroundTransparency = 1
+            mainFrame.Size = UDim2.new(0, 200, 0, 80)
+            mainFrame.Position = UDim2.new(1, -210, 0, 10)
+            mainFrame.ZIndex = 10
+            
+            local infoLabel = Instance.new("TextLabel")
+            infoLabel.Name = "InfoLabel"
+            infoLabel.Parent = mainFrame
+            infoLabel.Size = UDim2.new(1, 0, 1, 0)
+            infoLabel.BackgroundTransparency = 1
+            infoLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+            infoLabel.TextStrokeTransparency = 0.5
+            infoLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+            infoLabel.Font = Enum.Font.GothamBold
+            infoLabel.TextSize = 14
+            infoLabel.TextXAlignment = Enum.TextXAlignment.Right
+            infoLabel.TextYAlignment = Enum.TextYAlignment.Bottom
+            infoLabel.Text = "FPS: 0\nTimer: 0:00"
+            infoLabel.ZIndex = 11
+            
+            -- FPS Counter
+            local frameCount = 0
+            local lastFPSUpdate = tick()
+            local currentFPS = 0
+            
+            -- Update loop
+            updateConnection = RunService.Heartbeat:Connect(function()
+                frameCount = frameCount + 1
+                local now = tick()
+                
+                if now - lastFPSUpdate >= 0.5 then
+                    currentFPS = math.floor(frameCount / (now - lastFPSUpdate))
+                    frameCount = 0
+                    lastFPSUpdate = now
+                end
+                
+                local timerText = "0:00"
+                pcall(function()
+                    local game_folder = workspace:FindFirstChild("Game")
+                    if game_folder then
+                        local stats = game_folder:FindFirstChild("Stats")
+                        if stats then
+                            local timerValue = stats:GetAttribute("Timer")
+                            if timerValue and type(timerValue) == "number" then
+                                local mins = math.floor(timerValue / 60)
+                                local secs = timerValue % 60
+                                timerText = string.format("%d:%02d", mins, secs)
+                            end
+                        end
+                    end
+                end)
+                
+                if infoLabel and infoLabel.Parent then
+                    infoLabel.Text = string.format("FPS: %d\nTimer: %s", currentFPS, timerText)
+                end
+            end)
+            
+            Success("FPS/Timer Display", "Activated (top-right corner)", 2)
+        end)
+    end
+    
+    local function stop()
+        if not enabled then return end
+        enabled = false
+        
+        if updateConnection then
+            pcall(function() updateConnection:Disconnect() end)
+            updateConnection = nil
+        end
+        
+        if displayGui then
+            pcall(function() displayGui:Destroy() end)
+            displayGui = nil
+        end
+        
+        Info("FPS/Timer Display", "Disabled", 2)
+    end
+    
+    return {
+        Start = start,
+        Stop = stop,
+        IsEnabled = function() return enabled end,
+        Cleanup = function()
+            if updateConnection then
+                pcall(function() updateConnection:Disconnect() end)
+                updateConnection = nil
+            end
+            if displayGui then
+                pcall(function() displayGui:Destroy() end)
+                displayGui = nil
+            end
+        end
+    }
+end)()
 
 -- ========================================================================== --
 --                         VISUAL FEATURES MODULE                             --
@@ -4595,6 +4736,7 @@ local Window = Library:CreateWindow({
 })
 
 local Tabs = {
+    Info = Window:AddTab("Info", "info"),
     Combat = Window:AddTab("Combat", "swords"),
     Teleport = Window:AddTab("Teleport", "navigation"),
     ESP = Window:AddTab("ESP", "scan-eye"),
@@ -4606,6 +4748,88 @@ local Tabs = {
     ["UI Settings"] = Window:AddTab("UI Settings", "settings"),
 }
 
+-- ========================================================================== --
+--                            INFO TAB                                         --
+-- ========================================================================== --
+
+local InfoLeft = Tabs.Info:AddLeftGroupbox("Script Information", "info")
+local InfoRight = Tabs.Info:AddRightGroupbox("Discord", "users")
+
+-- SCRIPT INFO
+InfoLeft:AddLabel("Script Name: rzprivate - Evade", true)
+InfoLeft:AddLabel("Version: 3.0 (Obsidian)", true)
+InfoLeft:AddLabel("Author: iruz", true)
+InfoLeft:AddLabel("Last Updated: March 2026", true)
+
+InfoLeft:AddDivider()
+
+-- LIBRARY INFO
+InfoLeft:AddLabel("UI Library: Linoria (Obsidian)", true)
+InfoLeft:AddLabel("Library Author: deividcomsono", true)
+
+InfoLeft:AddDivider()
+
+-- FEATURES COUNT
+InfoLeft:AddLabel("Features Overview:", true)
+InfoLeft:AddLabel("• Combat: 8+ auto revive & weapons", true)
+InfoLeft:AddLabel("• Teleport: Map database system", true)
+InfoLeft:AddLabel("• ESP: 7 visualization modes", true)
+InfoLeft:AddLabel("• Movement: 10+ movement features", true)
+InfoLeft:AddLabel("• Visual: Barriers, lighting, effects", true)
+InfoLeft:AddLabel("• Auto Farm: Money, tickets, AFK", true)
+InfoLeft:AddLabel("• Server: Hop, join modes, lag switch", true)
+
+InfoLeft:AddDivider()
+
+InfoLeft:AddLabel("Status: All systems operational", true)
+
+-- DISCORD & COMMUNITY
+InfoRight:AddLabel("Join Discord Community", true)
+
+InfoRight:AddInput("DiscordLink", {
+    Default = "discord.gg/yourserver",
+    Numeric = false,
+    Finished = true,
+    Text = "Discord Server",
+    Tooltip = "Join our Discord for updates & support!",
+    Placeholder = "discord.gg/yourserver",
+})
+
+InfoRight:AddButton({
+    Text = "Copy Discord Link",
+    Tooltip = "Copy Discord invite to clipboard",
+    Func = function()
+        local discordLink = Options.DiscordLink.Value or "discord.gg/yourserver"
+        local success = pcall(function()
+            setclipboard(discordLink)
+        end)
+        
+        if success then
+            Success("Discord", "Link copied to clipboard!", 2)
+        else
+            Error("Discord", "Clipboard not supported by your executor", 2)
+        end
+    end
+})
+
+InfoRight:AddDivider()
+
+-- SYSTEM INFO
+InfoRight:AddLabel("Exe:", true)
+
+local executorName = "Unknown"
+pcall(function()
+    executorName = identifyexecutor() or "Unknown"
+end)
+InfoRight:AddLabel("Executor: " .. executorName, true)
+
+InfoRight:AddDivider()
+
+-- SUPPORT INFO
+InfoRight:AddLabel("Need Help?", true)
+InfoRight:AddLabel("• Join Discord for support", true)
+InfoRight:AddLabel("• Check UI Settings tab", true)
+InfoRight:AddLabel("• Read tooltips (hover buttons)", true)
 
 -- ========================================================================== --
 --                            COMBAT TAB                                       --
@@ -4622,6 +4846,26 @@ CombatLeft:AddButton({
         local char = player.Character
         if char then
             local isDowned = pcall(function() return char:GetAttribute("Downed") end)
+            if isDowned then
+                pcall(function()
+                    ReplicatedStorage.Events.Player.ChangePlayerMode:FireServer(true)
+                end)
+                Success("Revive Yourself", "Revive attempt sent!", 2)
+            else
+                Warning("Revive Yourself", "You are not downed!", 2)
+            end
+        end
+    end
+})
+
+CombatLeft:AddLabel("Manual Revive Keybind"):AddKeyPicker("ManualReviveKey", {
+    Default = "R",
+    Text = "Manual Revive Keybind",
+    Mode = "Press",
+    Callback = function()
+        local char = player.Character
+        if char then
+            local isDowned = char:GetAttribute("Downed")
             if isDowned then
                 pcall(function()
                     ReplicatedStorage.Events.Player.ChangePlayerMode:FireServer(true)
@@ -4812,7 +5056,7 @@ local function updateModuleStatus()
     local statusText = string.format(
         "Current Map: %s %s\nDatabase: %d maps | Last: %s %s",
         mapName,
-        mapName == "Unknown" and "(not detected)" or (hasMap and "(✅ in database)" or "(❌ not in database)"),
+        mapName == "Unknown" and "(not detected)" or (hasMap and "(in database)" or "(❌ not in database)"),
         mapCount,
         lastUpdate,
         isLoaded and "| ✅ Loaded" or "| ❌ Not Loaded"
@@ -4874,18 +5118,18 @@ TeleportLeft:AddDropdown("TeleporterType", {
 
 -- QUICK TELEPORTS
 TeleportLeft2:AddButton({
-    Text = "Teleport to Sky",
-    Tooltip = "Teleport player ke spot Sky",
-    Func = function()
-        TeleportModule.TeleportPlayer("Sky")
-    end
-})
-
-TeleportLeft2:AddButton({
     Text = "Teleport to Far",
     Tooltip = "Teleport player ke spot Far",
     Func = function()
         TeleportModule.TeleportPlayer("Far")
+    end
+})
+
+TeleportLeft2:AddButton({
+    Text = "Teleport to Sky",
+    Tooltip = "Teleport player ke spot Sky",
+    Func = function()
+        TeleportModule.TeleportPlayer("Sky")
     end
 })
 
@@ -4903,6 +5147,24 @@ TeleportLeft2:AddButton({
     Text = "Place Teleporter (Sky)",
     Tooltip = "Place di spot Sky untuk map saat ini",
     Func = function()
+        TeleportModule.PlaceTeleporter("Sky")
+    end
+})
+
+TeleportLeft2:AddLabel("Place Far Keybind"):AddKeyPicker("PlaceFarKey", {
+    Default = "H",
+    Text = "Place Teleporter (Far) Keybind",
+    Mode = "Press",
+    Callback = function()
+        TeleportModule.PlaceTeleporter("Far")
+    end
+})
+
+TeleportLeft2:AddLabel("Place Sky Keybind"):AddKeyPicker("PlaceSkyKey", {
+    Default = "J",
+    Text = "Place Teleporter (Sky) Keybind",
+    Mode = "Press",
+    Callback = function()
         TeleportModule.PlaceTeleporter("Sky")
     end
 })
@@ -5730,7 +5992,7 @@ MovementRight:AddInput("SlideSpeed", {
     end
 })
 
-MovementRight:AddLabel("How to use:\n• Run (hold Shift)\n• Slide will continue infinitely\n• Adjust speed for acceleration", true)
+MovementRight:AddLabel("How to use:\n• Slide will continue infinitely\n• Adjust speed for acceleration", true)
 
 -- BOUNCE MODIFICATION
 MovementRight2:AddToggle("BounceModify", {
@@ -5774,6 +6036,19 @@ Toggles.Gravity:OnChanged(function()
         GravityModule.Stop()
     end
 end)
+
+MovementRight2:AddLabel("Gravity Keybind"):AddKeyPicker("GravityKey", {
+    Default = "K",
+    Text = "Gravity Toggle Keybind",
+    Mode = "Toggle",
+    Callback = function()
+        if GravityModule.IsEnabled() then
+            GravityModule.Stop()
+        else
+            GravityModule.Start()
+        end
+    end
+})
 
 MovementRight2:AddInput("GravityValue", {
     Default = "10",
@@ -5877,30 +6152,44 @@ VisualLeft:AddDropdown("BarriersColor", {
     end
 })
 
-VisualLeft:AddDropdown("BarriersTransparency", {
-    Values = { 
-        "1 - Solid (0%)", 
-        "2 - Sedikit Transparan (20%)", 
-        "3 - Transparan (40%)", 
-        "4 - Setengah (50%)", 
-        "5 - Agak Transparan (60%)",
-        "6 - Transparan (70%)", 
-        "7 - Sangat Transparan (80%)", 
-        "8 - Hampir Tak Terlihat (85%)", 
-        "9 - Nyaris Invisible (90%)", 
-        "10 - Super Transparan (95%)" 
-    },
-    Default = "1 - Solid (0%)",
+VisualLeft:AddSlider("BarriersTransparency", {
     Text = "Transparency",
-    Tooltip = "Choose transparency level",
+    Tooltip = "Adjust barriers transparency (0 = solid, 100 = invisible)",
+    Default = 0,
+    Min = 0,
+    Max = 100,
+    Rounding = 0,
+    Compact = false,
+    Suffix = "%",
     Callback = function(Value)
-        local level = tonumber(Value:match("%d+"))
-        if level then
-            BarriersVisibleModule.SetTransparencyLevel(level)
-            if BarriersVisibleModule.IsEnabled() then
-                local percent = Value:match("%((%d+)%%%)")
-                Success("Transparency", "Barriers: " .. percent .. "% transparent", 1)
+        local transparencyValue = Value / 100
+        BarriersVisibleModule.SetTransparencyLevel(transparencyValue)
+        
+        -- Sync ke input box (kalau slider diubah, input ikut update)
+        if Options.BarriersTransparencyInput then
+            Options.BarriersTransparencyInput:SetValue(tostring(Value))
+        end
+    end
+})
+
+VisualLeft:AddInput("BarriersTransparencyInput", {
+    Default = "0",
+    Numeric = true,
+    Text = "Transparency Value",
+    Tooltip = "Enter transparency value (0-100)",
+    Placeholder = "0-100",
+    Callback = function(Value)
+        local num = tonumber(Value)
+        if num and num >= 0 and num <= 100 then
+            -- Update slider
+            if Options.BarriersTransparency then
+                Options.BarriersTransparency:SetValue(num)
             end
+            -- Apply transparency
+            local transparencyValue = num / 100
+            BarriersVisibleModule.SetTransparencyLevel(transparencyValue)
+        else
+            Error("Transparency", "Value must be between 0-100", 2)
         end
     end
 })
@@ -5960,6 +6249,25 @@ VisualRight:AddInput("StretchV", {
         VisualFeaturesModule.SetStretchV(Value)
     end
 })
+
+VisualRight:AddDivider()
+
+-- ==================== FPS & TIMER DISPLAY ====================
+VisualRight:AddToggle("FPSTimerDisplay", {
+    Text = "FPS & Timer Display",
+    Tooltip = "Show FPS counter and game timer (top-right corner)",
+    Default = false,
+})
+
+Toggles.FPSTimerDisplay:OnChanged(function()
+    if Toggles.FPSTimerDisplay.Value then
+        FPSTimerDisplayModule.Start()
+    else
+        FPSTimerDisplayModule.Stop()
+    end
+end)
+
+VisualRight:AddLabel("💡 Shows FPS and game round timer\nDisplayed in top-right corner of screen", true)
 
 VisualRight:AddDivider()
 
@@ -6343,6 +6651,24 @@ MenuGroup:AddToggle("KeybindMenuOpen", {
     end,
 })
 
+MenuGroup:AddToggle("EnableNotifications", {
+    Default = true,
+    Text = "Enable Notifications",
+    Tooltip = "Toggle all script notifications on/off",
+    Callback = function(value)
+        notificationsEnabled = value
+        if value then
+            Library:Notify({
+                Title = "🔔 Notifications",
+                Description = "Notifications enabled",
+                Time = 2,
+            })
+        else
+            -- No notification when disabled (obviously)
+        end
+    end,
+})
+
 MenuGroup:AddToggle("ShowCustomCursor", {
     Text = "Custom Cursor",
     Default = true,
@@ -6402,79 +6728,9 @@ SaveManager:BuildConfigSection(Tabs["UI Settings"])
 ThemeManager:ApplyToTab(Tabs["UI Settings"])
 
 -- ========================================================================== --
---                            SIMPLE INFO DISPLAY                             --
+--                  FPS/TIMER DISPLAY - MOVED TO VISUAL TAB                   --
 -- ========================================================================== --
-
-pcall(function()
-    StarterGui:SetCore("TopbarEnabled", false)
-end)
-
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "SimpleInfoDisplay"
-screenGui.ResetOnSpawn = false
-screenGui.IgnoreGuiInset = true
-screenGui.DisplayOrder = 1000
-screenGui.Parent = player:WaitForChild("PlayerGui")
-
-local mainFrame = Instance.new("Frame")
-mainFrame.Name = "MainFrame"
-mainFrame.Parent = screenGui
-mainFrame.BackgroundTransparency = 1
-mainFrame.Size = UDim2.new(0, 200, 0, 80)
-mainFrame.Position = UDim2.new(1, -210, 0, 10)
-mainFrame.ZIndex = 10
-
-local infoLabel = Instance.new("TextLabel")
-infoLabel.Name = "InfoLabel"
-infoLabel.Parent = mainFrame
-infoLabel.Size = UDim2.new(1, 0, 1, 0)
-infoLabel.BackgroundTransparency = 1
-infoLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-infoLabel.TextStrokeTransparency = 0.5
-infoLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-infoLabel.Font = Enum.Font.GothamBold
-infoLabel.TextSize = 14
-infoLabel.TextXAlignment = Enum.TextXAlignment.Right
-infoLabel.TextYAlignment = Enum.TextYAlignment.Bottom
-infoLabel.Text = ""
-infoLabel.ZIndex = 11
-
-local frameCount = 0
-local lastFPSUpdate = tick()
-local currentFPS = 0
-local fpsUpdateInterval = 0.5
-
-RunService.RenderStepped:Connect(function()
-    frameCount = frameCount + 1
-    
-    local currentTime = tick()
-    if currentTime - lastFPSUpdate >= fpsUpdateInterval then
-        currentFPS = math.floor(frameCount / (currentTime - lastFPSUpdate))
-        frameCount = 0
-        lastFPSUpdate = currentTime
-    end
-    
-    local timerText = "0:00"
-    local gameStats = workspace:FindFirstChild("Game")
-    if gameStats then
-        gameStats = gameStats:FindFirstChild("Stats")
-        if gameStats then
-            local timerValue = gameStats:GetAttribute("Timer")
-            if timerValue then
-                local mins = math.floor(timerValue / 60)
-                local secs = timerValue % 60
-                timerText = string.format("%d:%02d", mins, secs)
-            end
-        end
-    end
-    
-    infoLabel.Text = string.format("FPS: %d\nTimer: %s", currentFPS, timerText)
-end)
-
-player.CharacterAdded:Connect(function()
-    task.wait(0.5)
-    screenGui.Parent = player:WaitForChild("PlayerGui")
-end)
+-- Module sekarang ada di bawah, toggle ada di Visual Tab
 
 -- ========================================================================== --
 --                            FINAL SETUP & LOAD                              --
@@ -6579,17 +6835,14 @@ Library:OnUnload(function()
         ESP_System:Stop() 
     end
     
-    -- ==================== UI CLEANUP ====================
-    if screenGui and screenGui.Parent then
-        screenGui:Destroy()
-    end
-    
+    -- ==================== FPS/TIMER DISPLAY CLEANUP ====================
+if FPSTimerDisplayModule then
     pcall(function()
-        StarterGui:SetCore("TopbarEnabled", true)
+        FPSTimerDisplayModule.Cleanup()
+        print("✅ FPS/Timer Display cleaned up")
     end)
+end
     
     -- ==================== FINAL MESSAGE ====================
-    print("✅ All modules stopped successfully!")
-    print("✅ UI cleaned up!")
     print("✅ Script unloaded!")
 end)
