@@ -24,6 +24,89 @@ local placeId            = game.PlaceId
 local jobId              = game.JobId
 
 -- ========================================================================== --
+--                     SAFE PLAYER HELPERS (ANTI-CRASH)                       --
+-- ========================================================================== --
+
+-- Fungsi untuk mendapatkan Humanoid dengan aman (tidak akan crash)
+local function safeGetHumanoid(character)
+    if not character then return nil end
+    
+    local success, humanoid = pcall(function()
+        -- Coba cari Humanoid
+        local hum = character:FindFirstChild("Humanoid")
+        if hum then return hum end
+        
+        -- Jika tidak ada, tunggu max 2 detik
+        return character:WaitForChild("Humanoid", 2)
+    end)
+    
+    return success and humanoid or nil
+end
+
+-- Fungsi untuk cek apakah player sedang downed (dengan 3 metode berbeda)
+local function safeIsPlayerDowned(player)
+    if not player or not player.Character then return false end
+    
+    local success, isDowned = pcall(function()
+        local char = player.Character
+        
+        -- METODE 1: Cek attribute "Downed"
+        if char:GetAttribute("Downed") == true then 
+            return true 
+        end
+        
+        -- METODE 2: Cek di folder Ragdolls
+        local ragdollsFolder = workspace:FindFirstChild("Game") 
+            and workspace.Game:FindFirstChild("Ragdolls")
+        
+        if ragdollsFolder and ragdollsFolder:FindFirstChild(player.Name) then
+            return true
+        end
+        
+        -- METODE 3: Cek health Humanoid (SAFE)
+        local hum = safeGetHumanoid(char)
+        if hum and hum.Health <= 0 then 
+            return true 
+        end
+        
+        return false
+    end)
+    
+    return success and isDowned or false
+end
+
+-- Fungsi untuk mendapatkan posisi player downed (bahkan jika di Ragdolls)
+local function safeGetDownedPosition(player)
+    if not player then return nil end
+    
+    local success, position = pcall(function()
+        -- Coba dari character normal
+        if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            return player.Character.HumanoidRootPart.Position
+        end
+        
+        -- Coba dari Ragdolls folder
+        local ragdollsFolder = workspace:FindFirstChild("Game") 
+            and workspace.Game:FindFirstChild("Ragdolls")
+        
+        if ragdollsFolder then
+            local ragdoll = ragdollsFolder:FindFirstChild(player.Name)
+            if ragdoll then
+                local hrp = ragdoll:FindFirstChild("HumanoidRootPart") 
+                    or ragdoll:FindFirstChild("Torso")
+                    or ragdoll:FindFirstChild("Head")
+                
+                if hrp then return hrp.Position end
+            end
+        end
+        
+        return nil
+    end)
+    
+    return success and position or nil
+end
+
+-- ========================================================================== --
 --                            LOAD OBSIDIAN LIBRARY                           --
 -- ========================================================================== --
 
@@ -252,19 +335,10 @@ local InstantReviveModule = (function()
         isCurrentlyEmoting = state and string.find(state, "Emoting")
     end
     
-    -- Check if player is downed
+    -- ✅ FUNGSI YANG DIPERBAIKI (GANTI YANG LAMA)
     local function isPlayerDowned(pl)
-        if not pl or not pl.Character then return false end
-        local char = pl.Character
-        
-        -- Check Downed attribute
-        if char:GetAttribute("Downed") then return true end
-        
-        -- Check humanoid health
-        local hum = char:FindFirstChild("Humanoid")
-        if hum and hum.Health <= 0 then return true end
-        
-        return false
+        -- Gunakan helper function yang sudah dibuat
+        return safeIsPlayerDowned(pl)
     end
     
     -- Main revive loop
@@ -282,15 +356,21 @@ local InstantReviveModule = (function()
                 
                 -- Loop through all players
                 for _, pl in ipairs(Players:GetPlayers()) do
-                    if pl ~= player and pl.Character and pl.Character:FindFirstChild("HumanoidRootPart") then
+                    if pl ~= player and pl.Character then
+                        -- ✅ GUNAKAN SAFE CHECK
                         if isPlayerDowned(pl) then
-                            local dist = (myHRP.Position - pl.Character.HumanoidRootPart.Position).Magnitude
+                            -- ✅ GUNAKAN SAFE GET POSITION
+                            local targetPos = safeGetDownedPosition(pl)
                             
-                            -- Revive if in range
-                            if dist <= reviveRange then
-                                pcall(function()
-                                    interactEvent:FireServer("Revive", true, pl.Name)
-                                end)
+                            if targetPos then
+                                local dist = (myHRP.Position - targetPos).Magnitude
+                                
+                                -- Revive if in range
+                                if dist <= reviveRange then
+                                    pcall(function()
+                                        interactEvent:FireServer("Revive", true, pl.Name)
+                                    end)
+                                end
                             end
                         end
                     end
@@ -432,46 +512,39 @@ local AutoFarmMoneyModule = (function()
     local interactEvent = ReplicatedStorage:WaitForChild("Events")
         :WaitForChild("Character"):WaitForChild("Interact")
     
-    -- Check if player is downed
+    -- ✅ FUNGSI YANG DIPERBAIKI (GANTI YANG LAMA)
     local function isPlayerDowned(pl)
-        if not pl or not pl.Character then return false end
-        local char = pl.Character
-        
-        -- Check Downed attribute
-        if char:GetAttribute("Downed") == true then
-            return true
-        end
-        
-        -- Check in Ragdolls folder
-        local ragdollsFolder = workspace:FindFirstChild("Game") 
-            and workspace.Game:FindFirstChild("Ragdolls")
-        if ragdollsFolder and ragdollsFolder:FindFirstChild(pl.Name) then
-            return true
-        end
-        
-        return false
+        return safeIsPlayerDowned(pl)
     end
     
-    -- Get downed player's position (even if ragdoll)
+    -- ✅ FUNGSI YANG DIPERBAIKI (GANTI YANG LAMA)
     local function getDownedRootPart(pl)
-        -- Try normal character first
-        if pl.Character and pl.Character:FindFirstChild("HumanoidRootPart") then
-            return pl.Character.HumanoidRootPart
-        end
+        if not pl then return nil end
         
-        -- Try ragdoll folder
-        local ragdollsFolder = workspace:FindFirstChild("Game") 
-            and workspace.Game:FindFirstChild("Ragdolls")
-        if ragdollsFolder then
-            local ragdoll = ragdollsFolder:FindFirstChild(pl.Name)
-            if ragdoll then
-                return ragdoll:FindFirstChild("HumanoidRootPart") 
-                    or ragdoll:FindFirstChild("Torso") 
-                    or ragdoll:FindFirstChild("Head") 
-                    or ragdoll:FindFirstChildWhichIsA("BasePart")
+        local success, rootPart = pcall(function()
+            -- Try normal character first
+            if pl.Character and pl.Character:FindFirstChild("HumanoidRootPart") then
+                return pl.Character.HumanoidRootPart
             end
-        end
-        return nil
+            
+            -- Try ragdoll folder
+            local ragdollsFolder = workspace:FindFirstChild("Game") 
+                and workspace.Game:FindFirstChild("Ragdolls")
+            
+            if ragdollsFolder then
+                local ragdoll = ragdollsFolder:FindFirstChild(pl.Name)
+                if ragdoll then
+                    return ragdoll:FindFirstChild("HumanoidRootPart") 
+                        or ragdoll:FindFirstChild("Torso") 
+                        or ragdoll:FindFirstChild("Head") 
+                        or ragdoll:FindFirstChildWhichIsA("BasePart")
+                end
+            end
+            
+            return nil
+        end)
+        
+        return success and rootPart or nil
     end
     
     -- Main farm loop
@@ -4224,7 +4297,7 @@ function ESP_System:UpdatePlayersESP()
                 if character:FindFirstChild("Revives") then
                     textColor = Color3.fromRGB(255, 255, 0)
                     extraText = "] [Revives"
-                elseif character:GetAttribute("Downed") then
+                elseif safeIsPlayerDowned(player) then  -- ✅ DIGANTI PAKAI safeIsPlayerDowned
                     textColor = Color3.fromRGB(255, 0, 0)
                     extraText = "] [Downed"
                 end
@@ -4476,7 +4549,7 @@ function ESP_System:UpdatePlayerChams()
             pcall(function() if highlight then highlight:Destroy() end end)
             self.ChamsPlayers[player] = nil
         else
-            if player.Character:GetAttribute("Downed") then
+            if safeIsPlayerDowned(player) then  -- ✅ DIGANTI PAKAI safeIsPlayerDowned
                 highlight.FillColor = Color3.fromRGB(255, 0, 0)
                 highlight.OutlineColor = Color3.fromRGB(255, 255, 0)
             else
@@ -4517,16 +4590,18 @@ function ESP_System:UpdateTracerDowned()
 
     for _, player in ipairs(ESP_Players:GetPlayers()) do
         if player ~= ESP_LocalPlayer and player.Character then
-            if player.Character:GetAttribute("Downed") then
-                local hrp = player.Character:FindFirstChild("HumanoidRootPart")
-                    or player.Character:FindFirstChild("Head")
-                if hrp then
-                    activePlayers[player] = hrp
+            -- ✅ GUNAKAN SAFE CHECK
+            if safeIsPlayerDowned(player) then
+                -- ✅ GUNAKAN SAFE GET POSITION
+                local targetPos = safeGetDownedPosition(player)
+                if targetPos then
+                    activePlayers[player] = targetPos
                 end
             end
         end
     end
 
+    -- Hapus tracer untuk player yang tidak downed lagi
     for player, line in pairs(self.TracerDrawings) do
         if not activePlayers[player] then
             pcall(function() line:Remove() end)
@@ -4534,9 +4609,10 @@ function ESP_System:UpdateTracerDowned()
         end
     end
 
-    for player, hrp in pairs(activePlayers) do
+    -- Update/buat tracer untuk player yang downed
+    for player, targetPos in pairs(activePlayers) do
         local success, screenPos, onScreen = pcall(function()
-            return camera:WorldToViewportPoint(hrp.Position)
+            return camera:WorldToViewportPoint(targetPos)
         end)
 
         if success and onScreen then
@@ -4587,17 +4663,18 @@ function ESP_System:UpdateTracerAll()
 
     for _, player in ipairs(ESP_Players:GetPlayers()) do
         if player ~= ESP_LocalPlayer and player.Character then
-            local hrp = player.Character:FindFirstChild("HumanoidRootPart")
-                or player.Character:FindFirstChild("Head")
-            if hrp then
+            -- ✅ GUNAKAN SAFE GET POSITION
+            local targetPos = safeGetDownedPosition(player)
+            if targetPos then
                 activePlayers[player] = {
-                    hrp = hrp,
-                    downed = player.Character:GetAttribute("Downed") == true
+                    position = targetPos,
+                    downed = safeIsPlayerDowned(player)  -- ✅ SAFE CHECK
                 }
             end
         end
     end
 
+    -- Hapus tracer untuk player yang hilang
     for player, line in pairs(self.TracerAllDrawings) do
         if not activePlayers[player] then
             pcall(function() line:Remove() end)
@@ -4605,9 +4682,10 @@ function ESP_System:UpdateTracerAll()
         end
     end
 
+    -- Update/buat tracer
     for player, data in pairs(activePlayers) do
         local success, screenPos, onScreen = pcall(function()
-            return camera:WorldToViewportPoint(data.hrp.Position)
+            return camera:WorldToViewportPoint(data.position)
         end)
 
         if success and onScreen then
@@ -4625,6 +4703,7 @@ function ESP_System:UpdateTracerAll()
             line.Thickness = self.Settings.TracerAll.Thickness
             line.Visible = true
 
+            -- Warna berbeda untuk downed
             if data.downed then
                 line.Color = self.Settings.TracerAll.ColorDowned
             else
