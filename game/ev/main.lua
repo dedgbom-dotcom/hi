@@ -4184,6 +4184,8 @@ ESP_System.NextbotNames = {}
 ESP_System.Connections = {}
 ESP_System.Running = false
 ESP_System.ChamsPlayers = {}
+ESP_System.ChamsNextbots = {}           -- ← BARU!
+ESP_System.NextbotHitboxOriginal = {}   -- ← BARU! (untuk restore transparency)
 ESP_System.TracerDrawings = {}
 ESP_System.TracerAllDrawings = {}
 
@@ -4206,6 +4208,14 @@ ESP_System.Settings = {
         OutlineColor = Color3.fromRGB(255, 255, 255),
         FillTransparency = 0.5,
         OutlineTransparency = 0,
+    },
+    ChamsNextbots = {
+        Enabled = false,
+        FillColor = Color3.fromRGB(255, 0, 0),
+        OutlineColor = Color3.fromRGB(200, 0, 0),
+        FillTransparency = 0.3,
+        OutlineTransparency = 0,
+        ShowHitboxes = true,  -- ← FITUR BONUS!
     },
     TracerDowned = {
         Enabled = false,
@@ -4241,6 +4251,56 @@ function ESP_System:IsNextbot(model)
     if ESP_Players:FindFirstChild(model.Name) then return false end
     if model:GetAttribute("IsNPC") or model:GetAttribute("Nextbot") then return true end
     return false
+end
+
+-- Function to check if a part is a hitbox (by name patterns)
+function ESP_System:IsHitboxPart(part)
+    if not part or not part.Name then return false end
+    
+    local nameLower = part.Name:lower()
+    return nameLower:find("hitbox") or 
+           nameLower:find("hit") or 
+           nameLower:find("collision") or
+           nameLower:find("collide") or
+           nameLower:find("damage") or
+           nameLower:find("hurt") or
+           nameLower:find("attack") or
+           nameLower:find("body") or
+           nameLower:find("root") or
+           nameLower:find("torso") or
+           nameLower:find("head") or
+           nameLower:find("limb") or
+           nameLower:find("arm") or
+           nameLower:find("leg")
+end
+
+-- Function to make hitboxes visible (transparency = 0)
+function ESP_System:MakeHitboxesVisible(model)
+    if not model or not self.Settings.ChamsNextbots.ShowHitboxes then return end
+    
+    for _, part in ipairs(model:GetDescendants()) do
+        if part:IsA("BasePart") and self:IsHitboxPart(part) then
+            -- Store original transparency if not already stored
+            if not self.NextbotHitboxOriginal[part] then
+                self.NextbotHitboxOriginal[part] = part.Transparency
+            end
+            -- Set to 0 (fully visible)
+            part.Transparency = 0
+            part.CanQuery = true
+        end
+    end
+end
+
+-- Function to restore original transparency
+function ESP_System:RestoreHitboxesTransparency(model)
+    if not model then return end
+    
+    for _, part in ipairs(model:GetDescendants()) do
+        if part:IsA("BasePart") and self.NextbotHitboxOriginal[part] then
+            part.Transparency = self.NextbotHitboxOriginal[part]
+            self.NextbotHitboxOriginal[part] = nil
+        end
+    end
 end
 
 function ESP_System:GetDistanceFromPlayer(position)
@@ -4573,6 +4633,106 @@ function ESP_System:ClearPlayerChams()
     self.ChamsPlayers = {}
 end
 
+-- ==================== CHAMS NEXTBOTS FUNCTIONS ====================
+function ESP_System:CreateNextbotChams(model)
+    if not self.Settings.ChamsNextbots.Enabled then return end
+    if not model or not model:IsA("Model") then return end
+    
+    -- Remove old chams if exists
+    if self.ChamsNextbots[model] then
+        pcall(function() self.ChamsNextbots[model]:Destroy() end)
+    end
+    
+    -- Make hitboxes visible if enabled
+    if self.Settings.ChamsNextbots.ShowHitboxes then
+        self:MakeHitboxesVisible(model)
+    end
+    
+    -- Create highlight
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "NextbotChams"
+    highlight.FillColor = self.Settings.ChamsNextbots.FillColor
+    highlight.OutlineColor = self.Settings.ChamsNextbots.OutlineColor
+    highlight.FillTransparency = self.Settings.ChamsNextbots.FillTransparency
+    highlight.OutlineTransparency = self.Settings.ChamsNextbots.OutlineTransparency
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = model
+    
+    self.ChamsNextbots[model] = highlight
+    return highlight
+end
+
+function ESP_System:UpdateNextbotChams()
+    if not self.Settings.ChamsNextbots.Enabled then
+        self:ClearNextbotChams()
+        return
+    end
+    
+    -- Find all nextbots
+    local currentNextbots = {}
+    
+    -- Check in NPCs folder
+    local npcsFolder = workspace:FindFirstChild("NPCs")
+    if npcsFolder then
+        for _, model in ipairs(npcsFolder:GetChildren()) do
+            if model:IsA("Model") and self:IsNextbot(model) then
+                currentNextbots[model] = true
+            end
+        end
+    end
+    
+    -- Check in Game.Players folder
+    local playersFolder = workspace:FindFirstChild("Game") and workspace.Game:FindFirstChild("Players")
+    if playersFolder then
+        for _, model in ipairs(playersFolder:GetChildren()) do
+            if model:IsA("Model") and self:IsNextbot(model) then
+                currentNextbots[model] = true
+            end
+        end
+    end
+    
+    -- Update/create chams for current nextbots
+    for model in pairs(currentNextbots) do
+        if not self.ChamsNextbots[model] then
+            self:CreateNextbotChams(model)
+        else
+            -- Update colors if changed
+            local highlight = self.ChamsNextbots[model]
+            if highlight and highlight.Parent then
+                highlight.FillColor = self.Settings.ChamsNextbots.FillColor
+                highlight.OutlineColor = self.Settings.ChamsNextbots.OutlineColor
+                highlight.FillTransparency = self.Settings.ChamsNextbots.FillTransparency
+                highlight.OutlineTransparency = self.Settings.ChamsNextbots.OutlineTransparency
+            end
+            
+            -- Update hitbox visibility if toggle changed
+            if self.Settings.ChamsNextbots.ShowHitboxes then
+                self:MakeHitboxesVisible(model)
+            else
+                self:RestoreHitboxesTransparency(model)
+            end
+        end
+    end
+    
+    -- Remove chams for nextbots that no longer exist
+    for model, highlight in pairs(self.ChamsNextbots) do
+        if not currentNextbots[model] or not model.Parent then
+            self:RestoreHitboxesTransparency(model)
+            pcall(function() highlight:Destroy() end)
+            self.ChamsNextbots[model] = nil
+        end
+    end
+end
+
+function ESP_System:ClearNextbotChams()
+    for model, highlight in pairs(self.ChamsNextbots) do
+        self:RestoreHitboxesTransparency(model)
+        pcall(function() highlight:Destroy() end)
+    end
+    self.ChamsNextbots = {}
+    self.NextbotHitboxOriginal = {}
+end
+
 function ESP_System:UpdateTracerDowned()
     if not self.Settings.TracerDowned.Enabled then
         self:ClearTracerDowned()
@@ -4762,14 +4922,15 @@ function ESP_System:Start()
         end
     end)
     self.Connections.Main = ESP_RunService.Heartbeat:Connect(function()
-        if not self.Running then return end
-        pcall(function()
-            self:UpdatePlayersESP()
-            self:UpdateTicketsESP()
-            self:ScanNextbots()
-            self:UpdatePlayerChams()
-            self:UpdateTracerDowned()
-            self:UpdateTracerAll()
+    if not self.Running then return end
+    pcall(function()
+        self:UpdatePlayersESP()
+        self:UpdateTicketsESP()
+        self:ScanNextbots()
+        self:UpdatePlayerChams()
+        self:UpdateNextbotChams()  -- ← BARU!
+        self:UpdateTracerDowned()
+        self:UpdateTracerAll()
         end)
     end)
 end
@@ -4784,8 +4945,83 @@ function ESP_System:Stop()
     self:ClearTicketsESP()
     self:ClearNextbotsESP()
     self:ClearPlayerChams()
+    self:ClearNextbotChams()  -- ← BARU!
     self:ClearTracerDowned()
     self:ClearTracerAll()
+end
+
+-- ========================================================================== --
+--                         EXTERNAL MODULES LOADER                            --
+-- ========================================================================== --
+
+-- URLs for external modules
+local EXTERNAL_MODULES = {
+    LupenESP = "https://raw.githubusercontent.com/dedgbom-dotcom/hi/main/game/ev/modules/LupenESP.lua",
+    LupenFarm = "https://raw.githubusercontent.com/dedgbom-dotcom/hi/main/game/ev/modules/LupenFarm.lua"
+}
+
+-- Storage for loaded modules
+local ExternalModules = {
+    LupenESP = nil,
+    LupenFarm = nil,
+    LoadStatus = {
+        LupenESP = false,
+        LupenFarm = false
+    }
+}
+
+-- Function to load external module
+local function loadExternalModule(moduleName, url)
+    local success, result = pcall(function()
+        local scriptContent = game:HttpGet(url)
+        local moduleFunc = loadstring(scriptContent)
+        if moduleFunc then
+            return moduleFunc()
+        end
+        return nil
+    end)
+    
+    if success and result then
+        print("✅ " .. moduleName .. " loaded successfully")
+        return result
+    else
+        warn("❌ Failed to load " .. moduleName .. ": " .. tostring(result))
+        return nil
+    end
+end
+
+-- Load Lupen modules
+task.spawn(function()
+    -- Store Library reference globally for external modules
+    _G.RZPrivateLibrary = Library
+    
+    -- Load LupenESP
+    local lupenESP = loadExternalModule("LupenESP", EXTERNAL_MODULES.LupenESP)
+    if lupenESP then
+        ExternalModules.LupenESP = lupenESP
+        ExternalModules.LoadStatus.LupenESP = true
+    end
+    
+    -- Load LupenFarm
+    local lupenFarm = loadExternalModule("LupenFarm", EXTERNAL_MODULES.LupenFarm)
+    if lupenFarm then
+        ExternalModules.LupenFarm = lupenFarm
+        ExternalModules.LoadStatus.LupenFarm = true
+    end
+    
+    -- Notify load status
+    if ExternalModules.LoadStatus.LupenESP and ExternalModules.LoadStatus.LupenFarm then
+        Success("External Modules", "Lupen modules loaded successfully!", 3)
+    elseif ExternalModules.LoadStatus.LupenESP or ExternalModules.LoadStatus.LupenFarm then
+        Warning("External Modules", "Some Lupen modules failed to load", 3)
+    else
+        Error("External Modules", "Failed to load Lupen modules", 3)
+    end
+end)
+
+-- Helper function to check if module is loaded
+local function isModuleLoaded(moduleName)
+    return ExternalModules.LoadStatus[moduleName] == true
 end
 
 -- ========================================================================== --
@@ -4824,6 +5060,7 @@ local Tabs = {
     AutoFarm = Window:AddTab("Auto Farm", "zap"),
     PlayerSettings = Window:AddTab("Player Settings", "user"),
     Server = Window:AddTab("Server", "server"),
+    Lupen = Window:AddTab("Lupen", "user-check"),  -- ← BARU!
     ["UI Settings"] = Window:AddTab("UI Settings", "settings"),
 }
 
@@ -5561,6 +5798,110 @@ ESPRight:AddDropdown("ChamsTransparency", {
         Success("Chams", "Transparency: " .. Value, 1)
     end
 })
+
+ESPRight:AddDivider()
+
+-- ==================== CHAMS NEXTBOTS ====================
+ESPRight:AddToggle("ChamsNextbots", {
+    Text = "Chams Nextbots",
+    Tooltip = "Highlight nextbots dengan glow + hitbox visible",
+    Default = false,
+})
+
+Toggles.ChamsNextbots:OnChanged(function()
+    ESP_System.Settings.ChamsNextbots.Enabled = Toggles.ChamsNextbots.Value
+    if Toggles.ChamsNextbots.Value then
+        if not ESP_System.Running then ESP_System:Start() end
+        Success("Chams", "Nextbots Chams aktif", 2)
+    else
+        ESP_System:ClearNextbotChams()
+        Info("Chams", "Nextbots Chams dimatikan", 2)
+    end
+end)
+
+ESPRight:AddDropdown("ChamsNextbotsFillColor", {
+    Values = { "Merah", "Biru", "Hijau", "Kuning", "Pink", "Cyan", "Putih", "Oranye", "Ungu" },
+    Default = "Merah",
+    Text = "Fill Color",
+    Tooltip = "Warna isi body nextbot",
+    Callback = function(Value)
+        local colors = {
+            Merah  = Color3.fromRGB(255, 0,   0),
+            Biru   = Color3.fromRGB(0,   100, 255),
+            Hijau  = Color3.fromRGB(0,   255, 0),
+            Kuning = Color3.fromRGB(255, 255, 0),
+            Pink   = Color3.fromRGB(255, 0,   255),
+            Cyan   = Color3.fromRGB(0,   255, 255),
+            Putih  = Color3.fromRGB(255, 255, 255),
+            Oranye = Color3.fromRGB(255, 165, 0),
+            Ungu   = Color3.fromRGB(150, 0,   255),
+        }
+        ESP_System.Settings.ChamsNextbots.FillColor = colors[Value] or Color3.fromRGB(255,0,0)
+        Success("Chams", "Fill color: " .. Value, 1)
+    end
+})
+
+ESPRight:AddDropdown("ChamsNextbotsOutlineColor", {
+    Values = { "Merah Gelap", "Putih", "Kuning", "Merah", "Cyan", "Hijau" },
+    Default = "Merah Gelap",
+    Text = "Outline Color",
+    Tooltip = "Warna garis tepi body nextbot",
+    Callback = function(Value)
+        local colors = {
+            ["Merah Gelap"] = Color3.fromRGB(200, 0,   0),
+            Putih  = Color3.fromRGB(255, 255, 255),
+            Kuning = Color3.fromRGB(255, 255, 0),
+            Merah  = Color3.fromRGB(255, 0,   0),
+            Cyan   = Color3.fromRGB(0,   255, 255),
+            Hijau  = Color3.fromRGB(0,   255, 0),
+        }
+        ESP_System.Settings.ChamsNextbots.OutlineColor = colors[Value] or Color3.fromRGB(200,0,0)
+        Success("Chams", "Outline color: " .. Value, 1)
+    end
+})
+
+ESPRight:AddDropdown("ChamsNextbotsTransparency", {
+    Values = { "Solid (0%)", "Tipis (30%)", "Setengah (50%)", "Transparan (70%)" },
+    Default = "Tipis (30%)",
+    Text = "Transparency",
+    Tooltip = "Transparansi isi chams",
+    Callback = function(Value)
+        local levels = {
+            ["Solid (0%)"]       = 0,
+            ["Tipis (30%)"]      = 0.3,
+            ["Setengah (50%)"]   = 0.5,
+            ["Transparan (70%)"] = 0.7,
+        }
+        ESP_System.Settings.ChamsNextbots.FillTransparency = levels[Value] or 0.3
+        Success("Chams", "Transparency: " .. Value, 1)
+    end
+})
+
+ESPRight:AddToggle("ChamsNextbotsShowHitboxes", {
+    Text = "Show Hitboxes",
+    Tooltip = "Membuat hitbox nextbot visible (transparency = 0)",
+    Default = true,
+})
+
+Toggles.ChamsNextbotsShowHitboxes:OnChanged(function()
+    ESP_System.Settings.ChamsNextbots.ShowHitboxes = Toggles.ChamsNextbotsShowHitboxes.Value
+    
+    if Toggles.ChamsNextbotsShowHitboxes.Value then
+        -- Apply to existing nextbots
+        for model in pairs(ESP_System.ChamsNextbots) do
+            ESP_System:MakeHitboxesVisible(model)
+        end
+        Success("Hitboxes", "Nextbot hitboxes visible", 1)
+    else
+        -- Restore transparency
+        for model in pairs(ESP_System.ChamsNextbots) do
+            ESP_System:RestoreHitboxesTransparency(model)
+        end
+        Info("Hitboxes", "Nextbot hitboxes restored", 1)
+    end
+end)
+
+ESPRight:AddLabel("💡 Chams Nextbots:\n• Red glow on all nextbots\n• Visible through walls\n• Optional hitbox visibility", true)
 
 -- TRACERS
 ESPRight2:AddToggle("TracerDowned", {
@@ -6402,6 +6743,176 @@ VisualRight2:AddLabel("💡 Anti Lag Info:\n• Level 1 = Light (safe)\n• Leve
 VisualRight2:AddLabel("⚠️ Warning:\nAnti Lag cannot be undone!\nYou must rejoin to restore visuals", true)
 
 -- ========================================================================== --
+--                            LUPEN TAB                                        --
+-- ========================================================================== --
+
+local LupenLeft = Tabs.Lupen:AddLeftGroupbox("Lupen ESP", "eye")
+local LupenRight = Tabs.Lupen:AddRightGroupbox("Auto Farm Lupen", "zap")
+
+-- ==================== LUPEN ESP ====================
+LupenLeft:AddLabel("🟢 Lupen ESP - Green Highlight", true)
+LupenLeft:AddLabel("Highlights player 'Lupen' with green glow,\nname tag, and tracer line", true)
+
+LupenLeft:AddDivider()
+
+LupenLeft:AddToggle("LupenESP", {
+    Text = "Enable Lupen ESP",
+    Tooltip = "Highlight Lupen with green glow through walls",
+    Default = false,
+})
+
+Toggles.LupenESP:OnChanged(function()
+    if not isModuleLoaded("LupenESP") then
+        Error("Lupen ESP", "Module not loaded! Check console for errors.", 3)
+        Toggles.LupenESP:SetValue(false)
+        return
+    end
+    
+    if Toggles.LupenESP.Value then
+        ExternalModules.LupenESP:Start()
+    else
+        ExternalModules.LupenESP:Stop()
+    end
+end)
+
+LupenLeft:AddButton({
+    Text = "Refresh Lupen ESP",
+    Tooltip = "Manually refresh ESP if Lupen spawns/despawns",
+    Func = function()
+        if not isModuleLoaded("LupenESP") then
+            Error("Lupen ESP", "Module not loaded!", 2)
+            return
+        end
+        
+        if ExternalModules.LupenESP:IsEnabled() then
+            ExternalModules.LupenESP:Refresh()
+            Success("Lupen ESP", "Refreshed!", 1)
+        else
+            Warning("Lupen ESP", "Enable ESP first!", 2)
+        end
+    end
+})
+
+LupenLeft:AddInput("LupenTargetName", {
+    Default = "Lupen",
+    Numeric = false,
+    Text = "Target Player Name",
+    Tooltip = "Change target player name (default: Lupen)",
+    Placeholder = "Enter player name",
+    Callback = function(Value)
+        if not isModuleLoaded("LupenESP") then return end
+        
+        if Value and Value ~= "" then
+            ExternalModules.LupenESP:SetPlayerName(Value)
+            Success("Lupen ESP", "Target changed to: " .. Value, 2)
+        end
+    end
+})
+
+LupenLeft:AddDivider()
+
+LupenLeft:AddLabel("💡 Features:", true)
+LupenLeft:AddLabel("• Green Highlight (through walls)", true)
+LupenLeft:AddLabel("• Name tag with distance", true)
+LupenLeft:AddLabel("• Green tracer line", true)
+LupenLeft:AddLabel("• Auto-refresh on respawn", true)
+
+-- ==================== AUTO FARM LUPEN ====================
+LupenRight:AddLabel("🤖 Auto Farm Lupen", true)
+LupenRight:AddLabel("Automatically teleports to Lupen\nand farms by staying close", true)
+
+LupenRight:AddDivider()
+
+LupenRight:AddToggle("LupenFarm", {
+    Text = "Enable Auto Farm",
+    Tooltip = "Auto teleport to Lupen for farming",
+    Default = false,
+})
+
+Toggles.LupenFarm:OnChanged(function()
+    if not isModuleLoaded("LupenFarm") then
+        Error("Lupen Farm", "Module not loaded! Check console for errors.", 3)
+        Toggles.LupenFarm:SetValue(false)
+        return
+    end
+    
+    if Toggles.LupenFarm.Value then
+        ExternalModules.LupenFarm:Start()
+    else
+        ExternalModules.LupenFarm:Stop()
+    end
+end)
+
+LupenRight:AddToggle("LupenAutoRespawn", {
+    Text = "Auto Respawn",
+    Tooltip = "Auto respawn when downed during farming",
+    Default = true,
+})
+
+Toggles.LupenAutoRespawn:OnChanged(function()
+    if not isModuleLoaded("LupenFarm") then return end
+    
+    ExternalModules.LupenFarm:SetAutoRespawn(Toggles.LupenAutoRespawn.Value)
+    
+    if Toggles.LupenAutoRespawn.Value then
+        Success("Auto Respawn", "Enabled", 1)
+    else
+        Info("Auto Respawn", "Disabled", 1)
+    end
+end)
+
+LupenRight:AddInput("LupenFarmTargetName", {
+    Default = "Lupen",
+    Numeric = false,
+    Text = "Target Player Name",
+    Tooltip = "Change target player name for farming",
+    Placeholder = "Enter player name",
+    Callback = function(Value)
+        if not isModuleLoaded("LupenFarm") then return end
+        
+        if Value and Value ~= "" then
+            ExternalModules.LupenFarm:SetPlayerName(Value)
+            Success("Lupen Farm", "Target changed to: " .. Value, 2)
+        end
+    end
+})
+
+LupenRight:AddDivider()
+
+LupenRight:AddButton({
+    Text = "Return to SafeZone",
+    Tooltip = "Manually return to SecurityPart platform",
+    Func = function()
+        if not isModuleLoaded("LupenFarm") then
+            Error("Lupen Farm", "Module not loaded!", 2)
+            return
+        end
+        
+        local success = ExternalModules.LupenFarm:RefreshPlatform()
+        if success then
+            Success("SafeZone", "Teleported to SecurityPart!", 2)
+        else
+            Error("SafeZone", "Failed to teleport!", 2)
+        end
+    end
+})
+
+LupenRight:AddDivider()
+
+LupenRight:AddLabel("⚙️ How it works:", true)
+LupenRight:AddLabel("• Finds player 'Lupen' in game", true)
+LupenRight:AddLabel("• Teleports to Lupen automatically", true)
+LupenRight:AddLabel("• Stays close for farming", true)
+LupenRight:AddLabel("• Returns to SafeZone when Lupen leaves", true)
+LupenRight:AddLabel("• Auto respawns if downed", true)
+
+LupenRight:AddDivider()
+
+LupenRight:AddLabel("⚠️ Requirements:", true)
+LupenRight:AddLabel("• Player 'Lupen' must be in server", true)
+LupenRight:AddLabel("• SecurityPart will be created if missing", true)
+
+-- ========================================================================== --
 --                            SERVER TAB                                       --
 -- ========================================================================== --
 
@@ -6921,6 +7432,15 @@ if FPSTimerDisplayModule then
         print("✅ FPS/Timer Display cleaned up")
     end)
 end
+    
+    -- ==================== LUPEN EXTERNAL MODULES ====================
+    if ExternalModules.LupenESP and ExternalModules.LupenESP.IsEnabled and ExternalModules.LupenESP:IsEnabled() then
+        ExternalModules.LupenESP:Stop()
+    end
+    
+    if ExternalModules.LupenFarm and ExternalModules.LupenFarm.IsEnabled and ExternalModules.LupenFarm:IsEnabled() then
+        ExternalModules.LupenFarm:Stop()
+    end
     
     -- ==================== FINAL MESSAGE ====================
     print("✅ Script unloaded!")
